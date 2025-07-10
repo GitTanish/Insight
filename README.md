@@ -83,6 +83,21 @@ Use the built-in quick action buttons for common tasks:
 - **Find Key Patterns**: Identify interesting data patterns
 - **Data Quality Check**: Assess data completeness and quality
 
+## 📸 Screenshots
+
+### 🗂️ Upload a CSV File
+![Upload CSV](assets/upload_csv.png)
+
+### 💬 Ask a Natural Language Question
+![Ask Query](assets/ask_query.png)
+
+### ✅ Review Analytical Results
+![Result](assets/result.png)
+
+### 📊 View Auto-Generated Charts
+![Chart](assets/chart_generated.png)
+
+
 ## 🔧 Configuration
 
 ### Model Options
