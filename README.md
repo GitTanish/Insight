@@ -1,30 +1,30 @@
-# INSIGHT 📊
+# INSIGHT 📰
 
-![Python](https://img.shields.io/badge/python-v3.8+-blue.svg)
+![Python](https://img.shields.io/badge/python-v3.11+-blue.svg)
 ![Streamlit](https://img.shields.io/badge/streamlit-1.28+-red.svg)
 ![LangChain](https://img.shields.io/badge/langchain-latest-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![AI](https://img.shields.io/badge/AI-Powered-purple.svg)
 
-**AI-Powered Data Analysis and Visualization Agent**
+**The Daily Insight: AI-Powered Data Analysis & Visualization Broadsheet**
 
-INSIGHT is an intelligent data analysis tool that allows you to upload CSV files and interact with your data using natural language queries. Powered by Llama 3 via Groq API, it can generate insights, create visualizations, and perform complex data analysis tasks through simple conversational interactions.
+INSIGHT is an intelligent data analysis tool that allows you to upload CSV files and interact with your data using natural language queries. Powered by high-end LLMs via Groq API, it generates textual insights, creates **multiple ink-on-paper style visualizations**, and performs complex data analysis tasks through a beautifully crafted **Vintage Broadsheet** newspaper interface.
 
 ## ✨ Features
 
-- **Natural Language Queries**: Ask questions about your data in plain English
-- **Automated Visualizations**: Generate charts, graphs, and plots automatically
-- **Data Quality Assessment**: Identify missing values, duplicates, and data types
-- **Interactive Chat Interface**: Conversation-based data exploration
-- **Multiple Model Support**: Choose from various LLM models (Llama 3, Mistral, etc.)
-- **Secure Processing**: Sandboxed code execution for data analysis
-- **Quick Actions**: One-click data summaries and common analysis tasks
+- **Vintage Broadsheet Aesthetic**: An elite, tacticle editorial design featuring Playfair Display, EB Garamond, and a genuine aged-paper palette.
+- **Natural Language Queries**: Ask questions about your data in plain English.
+- **Multi-Plot Generation**: Generate and display multiple charts, graphs, and plots automatically per query.
+- **Data Quality Assessment**: Identify missing values, duplicates, and data types.
+- **Interactive Chat Interface**: Conversation-based data exploration presented as news clippings.
+- **Multiple Model Support**: Choose from various high-end LLMs (e.g., Llama 3.3 70B, Qwen, Gemma 2).
+- **Secure Processing**: Sandboxed code execution for data analysis.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.11 or higher
 - Groq API key (free at [console.groq.com](https://console.groq.com))
 - CSV file for analysis
 
@@ -36,52 +36,48 @@ INSIGHT is an intelligent data analysis tool that allows you to upload CSV files
    cd INSIGHT
    ```
 
-2. Install dependencies:
+2. Create and activate a Virtual Environment (Recommended):
+   ```bash
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Set up your API key:
+4. Set up your API key:
    
    **Method 1: Environment file (Recommended)**
    ```bash
    echo "GROQ_API_KEY=your_api_key_here" > .env
    ```
    
-   **Method 2: Enter manually in the app**
+   **Method 2: Enter manually in the app sidebar**
 
-4. Run the application:
+5. Run the application:
    ```bash
    streamlit run main.py
    ```
 
-5. Open your browser and navigate to `http://localhost:8501`
+6. Open your browser and navigate to `http://localhost:8501`
 
 ## 🎯 Usage
 
 ### Getting Started
 
-1. **Upload CSV File**: Use the sidebar to upload your CSV file
-2. **Configure API Key**: Set your Groq API key via .env file or manual entry
-3. **Start Analyzing**: Ask questions about your data in natural language
+1. **Upload CSV File**: Use the sidebar to upload your CSV file.
+2. **Configure API Key**: Set your Groq API key via .env file or manual entry.
+3. **Start Analyzing**: Ask questions about your data in natural language.
 
 ### Example Queries
 
-- "Show me the first 10 rows of the data"
-- "What are the column names and their data types?"
-- "Create a histogram of sales column"
+- "Create 2-3 simple but informative visualizations from this data"
+- "Show me a comprehensive summary of this dataset including basic statistics"
+- "Create a histogram of the sales column"
 - "Show correlation between price and quantity"
 - "What's the average revenue by category?"
-- "Find missing values in the dataset"
-- "Create a scatter plot of age vs income"
-
-### Quick Actions
-
-Use the built-in quick action buttons for common tasks:
-- **Data Summary**: Get comprehensive dataset overview
-- **Create Visualizations**: Generate informative charts
-- **Find Key Patterns**: Identify interesting data patterns
-- **Data Quality Check**: Assess data completeness and quality
 
 ## 📸 Screenshots
 
@@ -102,10 +98,10 @@ Use the built-in quick action buttons for common tasks:
 
 ### Model Options
 
-- `llama3-70b-8192` (Default) - Best performance
-- `llama3-8b-8192` - Faster responses
-- `mistral-saba-24b` - Alternative model
-- `compound-beta` - Experimental model
+- `llama-3.3-70b-versatile` (Default) - Best performance
+- `llama-3.1-8b-instant` - Faster responses
+- `qwen-2.5-32b` - Strong reasoning alternative
+- `gemma2-9b-it` - Efficient lightweight model
 
 ### Temperature Settings
 

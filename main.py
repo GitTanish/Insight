@@ -26,6 +26,11 @@ matplotlib.use('Agg')
 def main():
     """Main application function."""
     initialize_session_state()
+    
+    # Inject custom CSS
+    with open("style.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    
     render_main_header()
     config = render_sidebar()
     
