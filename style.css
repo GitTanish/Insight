@@ -1,0 +1,299 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,800;0,900;1,400;1,700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,700&family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+
+:root {
+    --paper-base: #f2ead8;
+    --paper-dark: #e8ddc4;
+    --ink-black: #1a1a1b;
+    --ink-gray: #3a3a3c;
+    --newspaper-red: #8b1d1d;
+    --border-ink: rgba(26, 26, 27, 0.15);
+}
+
+/* Global Broadsheet Layout */
+.stApp {
+    background-color: var(--paper-base);
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+    font-family: 'EB Garamond', serif;
+    color: var(--ink-black) !important;
+    line-height: 1.5;
+}
+
+/* Force all markdown text to be legible */
+.stMarkdown, p, span, li, label {
+    color: var(--ink-black) !important;
+}
+
+/* Sidebar: Utility Cabinet */
+[data-testid="stSidebar"] {
+    background-color: var(--paper-dark);
+    border-right: 2px solid var(--border-ink);
+}
+
+/* Masthead & Headers */
+.masthead-band {
+    background-color: var(--ink-black);
+    color: var(--paper-base);
+    padding: 4px 12px;
+    font-family: 'Courier Prime', monospace;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+}
+
+.masthead-band span {
+    color: var(--paper-base) !important;
+}
+
+h1, h2, h3 {
+    font-family: 'Playfair Display', serif !important;
+    font-weight: 900 !important;
+    color: var(--ink-black) !important;
+    text-transform: none !important;
+}
+
+h1 {
+    font-size: 4rem !important;
+    text-align: center;
+    border-bottom: 4px solid var(--ink-black);
+    margin: 1rem 0 !important;
+    line-height: 1 !important;
+}
+
+h2 {
+    border-bottom: 1px solid var(--ink-black);
+    padding-bottom: 4px;
+    font-size: 1.8rem !important;
+    font-style: italic;
+}
+
+/* Drop Cap Implementation */
+.drop-cap::first-letter {
+    font-family: 'Playfair Display', serif;
+    float: left;
+    font-size: 4.5rem;
+    line-height: 0.8;
+    margin: 0.1em 0.1em 0 0;
+    font-weight: 900;
+    color: var(--ink-black);
+}
+
+/* Article Metrics: Clippings */
+.stMetric {
+    background-color: transparent !important;
+    border: 1px solid var(--border-ink) !important;
+    border-radius: 0 !important;
+    padding: 1rem !important;
+    margin-bottom: 1rem !important;
+    position: relative;
+}
+
+[data-testid="stMetricValue"] {
+    font-family: 'Courier Prime', monospace !important;
+    font-weight: 700 !important;
+    color: var(--ink-black) !important;
+    font-size: 1.5rem !important;
+}
+
+[data-testid="stMetricLabel"] {
+    font-family: 'Courier Prime', monospace !important;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-gray) !important;
+    font-size: 0.7rem !important;
+}
+
+/* Paper Columns & Grids */
+.stDataFrame, .stTable {
+    border: 1px solid var(--border-ink) !important;
+    filter: sepia(0.2);
+}
+
+/* Chat Clipping Style */
+[data-testid="stChatMessage"] {
+    background-color: transparent !important;
+    border-bottom: 1px dashed var(--border-ink) !important;
+    padding: 2rem 0 !important;
+}
+
+.stChatMessageContent {
+    background-color: rgba(232, 221, 196, 0.4) !important;
+    border: 1px solid var(--border-ink) !important;
+    border-radius: 0 !important;
+    font-size: 1.1rem;
+    box-shadow: 2px 2px 0px rgba(0,0,0,0.05);
+    color: var(--ink-black) !important;
+}
+
+.stChatMessageContent p, .stChatMessageContent span {
+    color: var(--ink-black) !important;
+}
+
+[data-testid="user"] .stChatMessageContent {
+    background-color: rgba(139, 29, 29, 0.05) !important;
+    border-left: 4px solid var(--newspaper-red) !important;
+}
+
+/* Buttons as "Stamp" or "Ink" style */
+.stButton>button {
+    background-color: white !important;
+    color: var(--ink-black) !important;
+    border: 1px solid var(--ink-black) !important;
+    border-radius: 0 !important;
+    font-family: 'Courier Prime', monospace !important;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.75rem !important;
+    transition: all 0.2s ease !important;
+}
+
+.stButton>button:hover {
+    background-color: var(--ink-black) !important;
+    color: var(--paper-base) !important;
+}
+
+/* Monospace Helpers */
+.mono-label {
+    font-family: 'Courier Prime', monospace;
+    font-size: 0.75rem;
+    color: var(--ink-gray);
+    text-transform: uppercase;
+}
+
+/* Forms & Inputs */
+.stTextInput > div > div > input, 
+.stNumberInput > div > div > input,
+[data-baseweb="select"] > div,
+[data-baseweb="select"] > div > div {
+    background-color: var(--paper-base) !important;
+    color: var(--ink-black) !important;
+    border: 1px solid var(--ink-black) !important;
+    border-radius: 0 !important;
+    font-family: 'Courier Prime', monospace !important;
+}
+
+[data-baseweb="popover"] {
+    background-color: var(--paper-base) !important;
+    border: 1px solid var(--ink-black) !important;
+}
+
+[data-baseweb="menu"] li {
+    color: var(--ink-black) !important;
+}
+
+/* Slider */
+.stSlider div[data-testid="stThumbValue"], .stSlider div[data-testid="stTickBarMax"], .stSlider div[data-testid="stTickBarMin"] {
+    color: var(--ink-black) !important;
+    font-family: 'Courier Prime', monospace !important;
+}
+
+.stSlider div[role="slider"] {
+    background-color: var(--newspaper-red) !important;
+}
+
+/* Expanders (Folded Articles) */
+[data-testid="stExpander"] {
+    border: 1px solid var(--ink-black) !important;
+    border-radius: 0 !important;
+    background-color: transparent !important;
+}
+
+[data-testid="stExpander"] summary {
+    border-bottom: 1px dashed var(--ink-black) !important;
+    background-color: rgba(26, 26, 27, 0.05) !important;
+}
+
+[data-testid="stExpander"] summary p {
+    font-family: 'Courier Prime', monospace !important;
+    font-weight: 700 !important;
+}
+
+/* Chat Input Bar */
+[data-testid="stChatInput"] {
+    background-color: var(--paper-base) !important;
+    border: 2px solid var(--ink-black) !important;
+    border-radius: 0 !important;
+}
+
+[data-testid="stChatInput"] textarea {
+    color: var(--ink-black) !important;
+    font-family: 'Courier Prime', monospace !important;
+}
+
+/* Kicker / Subheader */
+.kicker {
+    color: var(--newspaper-red);
+    font-family: 'Courier Prime', monospace;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.8rem;
+    margin-bottom: 0.25rem;
+}
+
+/* File Uploader Correction */
+[data-testid="stFileUploader"] {
+    background-color: var(--paper-base) !important;
+    border: 1px dashed var(--ink-black) !important;
+    padding: 1rem !important;
+}
+
+[data-testid="stFileUploader"] section {
+    background-color: transparent !important;
+}
+
+[data-testid="stFileUploader"] label {
+    color: var(--ink-black) !important;
+    font-family: 'Playfair Display', serif !important;
+    font-weight: 700 !important;
+}
+
+[data-testid="stFileUploader"] div, [data-testid="stFileUploader"] span {
+    color: var(--ink-black) !important;
+    font-family: 'Courier Prime', monospace !important;
+}
+
+[data-testid="stFileUploader"] button {
+    background-color: var(--ink-black) !important;
+    color: var(--paper-base) !important;
+    border: none !important;
+    border-radius: 0 !important;
+    text-transform: uppercase;
+    font-family: 'Courier Prime', monospace !important;
+    font-size: 0.7rem !important;
+}
+
+[data-testid="stFileUploader"] button:hover {
+    background-color: var(--newspaper-red) !important;
+    color: white !important;
+}
+.stImage img {
+    filter: grayscale(1) contrast(1.2) sepia(0.3);
+    border: 1px solid var(--border-ink);
+}
+
+/* Divider Lines */
+hr {
+    border: 0;
+    border-top: 1px solid var(--ink-black);
+    margin: 1rem 0;
+}
+
+hr.double {
+    border-top: 3px double var(--ink-black);
+}
+
+/* UI Cleanup */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+
+/* Style the header icons for broadsheet aesthetic */
+header {
+    background: transparent !important;
+}
+
+header button [data-testid="stIconMaterial"] {
+    color: var(--ink-black) !important;
+}

@@ -99,9 +99,37 @@ def _render_file_upload():
 
 
 def render_main_header():
-    """Render the main application header."""
-    st.header("AI Agent for Data Analysis & Visualization")
-    st.write("Upload your CSV file and ask questions in plain English. Powered by Llama 3 via Groq API.")
+    """Render the vintage newspaper masthead and header."""
+    # Ink-black masthead band
+    st.markdown("""
+        <div class='masthead-band'>
+            <span>Established 2026</span>
+            <span>The Daily Insight : Data Edition</span>
+            <span>Weather: Heavy with Insights</span>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Front Page Branding
+    col1, col2, col3 = st.columns([1, 4, 1])
+    with col2:
+        if os.path.exists("assets/logo.png"):
+            st.image("assets/logo.png", use_container_width=True)
+        else:
+            st.markdown("<h1>THE INSIGHT</h1>", unsafe_allow_html=True)
+            
+    st.markdown("<hr class='double'>", unsafe_allow_html=True)
+    
+    # Hero Intro with Drop Cap
+    st.markdown("""
+        <div class='drop-cap'>
+            Welcome to the front page of your data. This broadsheet serves as a sophisticated medium for 
+            analyzing complex datasets through the lens of artificial intelligence. Upload your records, 
+            peruse the statistics, and consult our automated agent for deep investigative reporting on 
+            the patterns hidden within.
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<hr>", unsafe_allow_html=True)
 
 
 def render_api_key_info():
@@ -135,33 +163,46 @@ def render_sample_questions():
 
 
 def render_data_overview(df):
-    """Render data overview section with metrics and sample data."""
-    st.subheader("Dataset Overview")
+    """Render data overview section as a news report."""
+    st.markdown("<div class='kicker'>Special Report</div>", unsafe_allow_html=True)
+    st.subheader("I. Current State of the Records")
+    
     _display_data_info(df)
     
-    with st.expander("View Data Sample", expanded=False):
-        st.dataframe(df.head(10))
-    
-    with st.expander("Data Types & Info", expanded=False):
-        _render_data_types_info(df)
+    col1, col2 = st.columns(2)
+    with col1:
+        with st.expander("📝 View Raw Daily Ledger", expanded=False):
+            st.dataframe(df.head(10))
+    with col2:
+        with st.expander("🗂️ Record Classification", expanded=False):
+            _render_data_types_info(df)
+            
+    st.markdown("<hr>", unsafe_allow_html=True)
 
 
 def _display_data_info(df):
-    """Display data summary metrics."""
+    """Display data summary metrics in a columned broadsheet grid."""
     summary = get_data_summary(df)
-    col1, col2, col3, col4 = st.columns(4)
     
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Total Rows", f"{summary['rows']:,}")
-        st.metric("Missing Values", f"{summary['missing_values']:,}")
+        st.metric("Ledger Rows", f"{summary['rows']:,}")
     with col2:
-        st.metric("Total Columns", summary['columns'])
-        st.metric("Duplicate Rows", f"{summary['duplicate_rows']:,}")
+        st.metric("Variables", summary['columns'])
     with col3:
-        st.metric("Numeric Columns", summary['numeric_columns'])
-        st.metric("Memory Usage", f"{summary['memory_usage'] / 1024:.1f} KB")
+        st.metric("Numeric Fields", summary['numeric_columns'])
     with col4:
-        st.metric("Text Columns", summary['categorical_columns'])
+        st.metric("Paper Weight", f"{summary['memory_usage'] / 1024:.1f} KB")
+        
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Missing Ink", f"{summary['missing_values']:,}")
+    with col2:
+        st.metric("Clones", f"{summary['duplicate_rows']:,}")
+    with col3:
+        st.metric("Categorical", summary['categorical_columns'])
+    with col4:
+        st.markdown("<span class='mono-label'>Classified Report</span>", unsafe_allow_html=True)
 
 
 def _render_data_types_info(df):
@@ -185,13 +226,13 @@ def _render_data_types_info(df):
 
 
 def render_quick_actions():
-    """Render quick action buttons."""
-    st.subheader("Quick Actions")
+    """Render quick action buttons with better styling."""
+    st.subheader("💡 Recommended Analysis")
     cols = st.columns(len(QUICK_ACTIONS))
     
     for i, action in enumerate(QUICK_ACTIONS):
         with cols[i]:
-            if st.button(action["label"], key=f"quick_action_{i}"):
+            if st.button(action["label"], key=f"quick_action_{i}", use_container_width=True):
                 st.session_state.quick_query = action["query"]
                 st.rerun()
 
@@ -221,9 +262,10 @@ def _render_conversation_history():
     for message in st.session_state.history:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-            if message["role"] == "assistant" and "plot_path" in message:
-                if message["plot_path"] and os.path.exists(message["plot_path"]):
-                    st.image(message["plot_path"])
+            if message["role"] == "assistant" and "plot_paths" in message:
+                for plot_path in message["plot_paths"]:
+                    if plot_path and os.path.exists(plot_path):
+                        st.image(plot_path)
 
 
 def _handle_user_query(user_query, df):
@@ -234,7 +276,7 @@ def _handle_user_query(user_query, df):
         st.markdown(user_query)
     
     with st.chat_message("assistant"):
-        with st.spinner("Analyzing your data..."):
+        with st.spinner("Compiling Dispatch..."):
             response = st.session_state.agent.query(user_query, df)
             
             if response['success']:
@@ -242,15 +284,19 @@ def _handle_user_query(user_query, df):
             else:
                 st.error(response['output'])
             
-            # Display plot if it exists
-            if response['plot_path'] and os.path.exists(response['plot_path']):
-                st.image(response['plot_path'])
-                st.success("✅ Visualization generated successfully!")
+            # Display plots if they exist
+            plot_paths = response.get('plot_paths', [])
+            for plot_path in plot_paths:
+                if os.path.exists(plot_path):
+                    st.image(plot_path)
+            
+            if plot_paths:
+                st.markdown(f"<div class='mono-label'>Exhibit: {len(plot_paths)} Evidence Clipping(s)</div>", unsafe_allow_html=True)
             
             # Store in history
             history_entry = {"role": "assistant", "content": response['output']}
-            if response['plot_path']:
-                history_entry["plot_path"] = response['plot_path']
+            if plot_paths:
+                history_entry["plot_paths"] = plot_paths
             st.session_state.history.append(history_entry)
 
 

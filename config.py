@@ -1,12 +1,19 @@
 # --- Model Configuration ---
 MODEL_OPTIONS = [
-    "llama3-70b-8192",
-    "llama3-8b-8192",
-    "mistral-saba-24b",
-    "compound-beta"
+    "llama-3.3-70b-versatile",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "openai/gpt-oss-120b",
+    "qwen/qwen3-32b",
+    "moonshotai/kimi-k2-instruct",
+    "groq/compound",
+    "groq/compound-mini",
+    "llama-3.1-8b-instant",
+    "allam-2-7b",
+    "canopylabs/orpheus-v1-english",
+    "openai/gpt-oss-20b"
 ]
 
-DEFAULT_MODEL = "llama3-70b-8192"
+DEFAULT_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_TEMPERATURE = 0.0
 
 # --- Sample Questions ---

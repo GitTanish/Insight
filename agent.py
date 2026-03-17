@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import streamlit as st
 import pandas as pd
@@ -39,7 +40,7 @@ class DataAnalysisAgent:
         except Exception as e:
             raise Exception(f"Failed to initialize agent: {str(e)}")
 
-    def query(self, user_query: str, df: "pd.DataFrame"):
+    def query(self, user_query: str, df: pd.DataFrame):
         """Process a user query and return analysis results."""
         if not self.agent:
             raise Exception("Agent not initialized")
@@ -63,12 +64,12 @@ class DataAnalysisAgent:
             response = self.agent.invoke({"input": enhanced_query})
             output = self._process_response(response)
             
-            # Check for plot file
-            plot_path = self._find_plot_file(plot_filename)
+            # Check for plot files (support multiple)
+            plot_paths = self._find_plot_files(st.session_state.plot_counter)
             
             return {
                 'output': output,
-                'plot_path': plot_path,
+                'plot_paths': plot_paths,
                 'success': True
             }
         except Exception as e:
@@ -76,6 +77,7 @@ class DataAnalysisAgent:
 
     def _create_enhanced_query(self, user_query: str, df_info: dict, plot_filename: str):
         """Create an enhanced query with visualization instructions."""
+        counter = st.session_state.plot_counter
         return f"""
         Please analyze the following request about the dataset:
         Query: {user_query}
@@ -86,32 +88,43 @@ class DataAnalysisAgent:
         - Data Types: {df_info['dtypes']}
         - Missing Values: {df_info['null_counts']}
         
-        IMPORTANT VISUALIZATION INSTRUCTIONS:
-        1. If creating ANY visualization, you MUST use Seaborn or Matplotlib with high-quality styling.
-        2. Set Seaborn style at the start: sns.set_theme(style='whitegrid', palette='muted')
-        3. You MUST save the final plot using: plt.savefig('{plot_filename}', dpi=300, bbox_inches='tight')
-        4. After saving, call plt.close() to free memory.
-        5. Use proper titles, labels with font weight 'bold', and clean formatting.
-        6. For matplotlib plots, set figure size: plt.figure(figsize=(10, 6))
-        7. Make sure to import needed libraries: import matplotlib.pyplot as plt, seaborn as sns
+        CRITICAL EXECUTION INSTRUCTIONS:
+        1. You MUST EXECUTE all Python code using the available tools to perform analysis.
+        2. DO NOT include the Python code in your final response to the user.
+        3. Only provide the textual analysis and insights in your final response.
         
-        Example for beautiful plots:
+        VISUALIZATION INSTRUCTIONS:
+        1. If creating visualizations, they MUST follow a 'Vintage Newspaper' aesthetic.
+        2. Set figure background to the paper color: plt.rcParams['figure.facecolor'] = '#f2ead8'
+        3. Use ink-black (#1a1a1b) for all text, labels, and axes.
+        4. Use a muted, classic color palette (e.g., 'Greys', 'copper' or 'bone' for continuous, or a custom muted set for categorical).
+        5. You MUST save each plot with: plt.savefig(filename, dpi=300, bbox_inches='tight', facecolor='#f2ead8')
+        6. Use the naming convention: 'temp_plot_{counter}_1.png', 'temp_plot_{counter}_2.png'.
+        7. No modern neon colors, no glowing effects. Use high contrast ink-on-paper look.
+        8. Use 'EB Garamond' or 'serif' for fonts if possible.
+        
+        Example for vintage plots:
         ```python
         import matplotlib.pyplot as plt
         import seaborn as sns
-        sns.set_theme(style='whitegrid', palette='muted')
-        plt.figure(figsize=(10, 6))
-        # Your specific analysis/plot code here
-        # sns.barplot(...) or sns.lineplot(...)
-        plt.title('Professional Analysis Title', fontweight='bold')
-        plt.savefig('{plot_filename}', dpi=300, bbox_inches='tight')
+        plt.rcParams['figure.facecolor'] = '#f2ead8'
+        plt.rcParams['text.color'] = '#1a1a1b'
+        plt.rcParams['axes.labelcolor'] = '#1a1a1b'
+        
+        # Plot 1
+        plt.figure(figsize=(10, 6), facecolor='#f2ead8')
+        sns.set_palette(['#1a1a1b', '#8b1d1d', '#3a3a3c', '#525252']) 
+        sns.boxplot(...)
+        plt.title('Plot Title', fontweight='bold', fontsize=16)
+        plt.savefig('temp_plot_{counter}_1.png', dpi=300, bbox_inches='tight', facecolor='#f2ead8')
         plt.close()
         ```
         
         Analysis Strategy:
-        - First, understand the column types to choose the right statistical method/plot.
-        - If the user asks for "trends" or "patterns", prioritize correlation or distribution analysis.
-        - Always provide a clear, textual summary of the insights found BEFORE or AFTER the visualization code.
+        - First, understand the column types.
+        - Execute your analysis code to get facts.
+        - If visualizations are needed, save them as instructed.
+        - Provide a comprehensive textual summary of your findings as the final output.
         """
 
     def _process_response(self, response):
@@ -131,13 +144,21 @@ class DataAnalysisAgent:
         
         return output
 
-    def _find_plot_file(self, plot_filename: str):
-        """Find and return the path to the generated plot file."""
-        if os.path.exists(plot_filename):
-            return plot_filename
-        elif os.path.exists("temp_plot.png"):  # Fallback to original name
-            return "temp_plot.png"
-        return None
+    def _find_plot_files(self, counter: int):
+        """Find and return a list of paths to all generated plot files."""
+        plots = []
+        # Check for specific numbered plots
+        for i in range(1, 6):  # Check for up to 5 plots
+            filename = f"temp_plot_{counter}_{i}.png"
+            if os.path.exists(filename):
+                plots.append(filename)
+        
+        # Fallback to the original plot filename if no numbered ones exist
+        filename_orig = f"temp_plot_{counter}.png"
+        if os.path.exists(filename_orig):
+            plots.append(filename_orig)
+            
+        return plots
 
     def _handle_query_error(self, error):
         """Handle errors during query processing."""
@@ -151,7 +172,7 @@ class DataAnalysisAgent:
         else:
             return {
                 'output': f"Error processing query: {error_msg}",
-                'plot_path': None,
+                'plot_paths': [],
                 'success': False
             }
 
