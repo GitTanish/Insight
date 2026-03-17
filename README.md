@@ -175,6 +175,15 @@ INSIGHT uses LangChain's pandas agent which can execute Python code to analyze y
 - **"Invalid API key format"**: Ensure API key starts with `gsk_`
 - **"File too large"**: Reduce dataset size or sample your data
 
+## 🔮 Future Scope (Insight v3)
+
+The next major iteration of the platform aims to add deep structural capabilities:
+
+- **Automatic Dataset Profiling**: Instant statistical reports generated automatically upon file upload.
+- **Multi-File Reasoning**: Support for cross-referencing and analyzing multiple CSV datasets simultaneously.
+- **Tool-Based Statistical Analysis**: Dedicated LangChain tools for complex operations like T-tests and Linear Regression.
+- **Persistent Session Memory**: Database-backed sessions allowing users to pause and resume investigations across multiple days.
+
 ## 🤝 Contributing
 
 1. Fork the repository
