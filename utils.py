@@ -129,3 +129,37 @@ def cleanup_plot_files():
                 os.remove(plot_path)
             except Exception:
                 pass  # Ignore cleanup errors
+
+
+def generate_export_docx(history):
+    """Generate a DOCX file from the conversation history."""
+    try:
+        from docx import Document
+        from docx.shared import Inches
+    except ImportError:
+        raise ImportError("Please install python-docx to use export features.")
+        
+    doc = Document()
+    doc.add_heading('The Daily Insight: Data Analysis Report', 0)
+    
+    doc.add_heading('Conversation History', 1)
+    
+    if not history:
+        doc.add_paragraph("No conversation history available.")
+    
+    for msg in history:
+        role = "Investigations Reporter" if msg["role"] == "user" else "AI Analyst"
+        doc.add_heading(role, level=2)
+        doc.add_paragraph(msg["content"])
+        
+        if "plot_paths" in msg:
+            for plot_path in msg["plot_paths"]:
+                if os.path.exists(plot_path):
+                    try:
+                        doc.add_picture(plot_path, width=Inches(6.0))
+                    except Exception:
+                        doc.add_paragraph(f"[Image failed to load: {plot_path}]")
+                        
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()

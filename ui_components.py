@@ -5,7 +5,8 @@ from config import (
     SAMPLE_QUESTIONS, QUICK_ACTIONS, SECURITY_WARNING
 )
 from utils import (
-    get_data_summary, clear_conversation, validate_csv, validate_api_key
+    get_data_summary, clear_conversation, validate_csv, validate_api_key,
+    generate_export_docx
 )
 from agent import initialize_agent_if_needed
 
@@ -255,6 +256,31 @@ def render_chat_interface(api_key, model, temperature, df):
     # Chat input
     if user_query := st.chat_input("Ask a question about your data..."):
         _handle_user_query(user_query, df)
+        
+    st.caption(
+        '''
+        **Try asking:**
+        • What anomalies exist in this dataset?
+        • Which IDs or categories have unusually high values?
+        • Is there a trend over time?
+        • What statistical insights stand out?
+        • Detect unusual clusters
+        '''
+    )
+    
+    if st.session_state.get('history'):
+        st.markdown("<br>", unsafe_allow_html=True)
+        try:
+            docx_bytes = generate_export_docx(st.session_state.history)
+            st.download_button(
+                label="📥 Export Final Report (DOCX)",
+                data=docx_bytes,
+                file_name="Insight_Analysis_Report.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"Export failed: {e}")
 
 
 def _render_conversation_history():
