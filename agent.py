@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import pandas as pd
 from langchain_groq import ChatGroq
 from langchain_experimental.agents import create_pandas_dataframe_agent
 
@@ -38,7 +39,7 @@ class DataAnalysisAgent:
         except Exception as e:
             raise Exception(f"Failed to initialize agent: {str(e)}")
 
-    def query(self, user_query: str, df_info: dict):
+    def query(self, user_query: str, df: "pd.DataFrame"):
         """Process a user query and return analysis results."""
         if not self.agent:
             raise Exception("Agent not initialized")
@@ -46,6 +47,15 @@ class DataAnalysisAgent:
         # Generate unique plot filename
         st.session_state.plot_counter += 1
         plot_filename = f"temp_plot_{st.session_state.plot_counter}.png"
+        
+        # Get detailed metadata
+        df_info = {
+            'shape': df.shape,
+            'columns': df.columns.tolist(),
+            'dtypes': df.dtypes.to_dict(),
+            'null_counts': df.isnull().sum().to_dict(),
+            'numeric_summary': df.describe().to_dict() if not df.empty else {}
+        }
         
         enhanced_query = self._create_enhanced_query(user_query, df_info, plot_filename)
         
@@ -70,30 +80,38 @@ class DataAnalysisAgent:
         Please analyze the following request about the dataset:
         Query: {user_query}
         
-        Dataset info:
+        Detailed Dataset Metadata:
         - Shape: {df_info['shape']}
         - Columns: {df_info['columns']}
+        - Data Types: {df_info['dtypes']}
+        - Missing Values: {df_info['null_counts']}
         
         IMPORTANT VISUALIZATION INSTRUCTIONS:
-        1. If creating ANY visualization, you MUST save it using: plt.savefig('{plot_filename}', dpi=300, bbox_inches='tight')
-        2. After saving, call plt.close() to free memory
-        3. Use proper titles, labels, and formatting for all plots
-        4. For matplotlib plots, set figure size: plt.figure(figsize=(10, 6))
-        5. Make sure to import matplotlib.pyplot as plt if needed
+        1. If creating ANY visualization, you MUST use Seaborn or Matplotlib with high-quality styling.
+        2. Set Seaborn style at the start: sns.set_theme(style='whitegrid', palette='muted')
+        3. You MUST save the final plot using: plt.savefig('{plot_filename}', dpi=300, bbox_inches='tight')
+        4. After saving, call plt.close() to free memory.
+        5. Use proper titles, labels with font weight 'bold', and clean formatting.
+        6. For matplotlib plots, set figure size: plt.figure(figsize=(10, 6))
+        7. Make sure to import needed libraries: import matplotlib.pyplot as plt, seaborn as sns
         
-        Example code for visualizations:
+        Example for beautiful plots:
         ```python
         import matplotlib.pyplot as plt
+        import seaborn as sns
+        sns.set_theme(style='whitegrid', palette='muted')
         plt.figure(figsize=(10, 6))
-        # Your plot code here
-        plt.title('Your Plot Title')
-        plt.xlabel('X Label')
-        plt.ylabel('Y Label')
+        # Your specific analysis/plot code here
+        # sns.barplot(...) or sns.lineplot(...)
+        plt.title('Professional Analysis Title', fontweight='bold')
         plt.savefig('{plot_filename}', dpi=300, bbox_inches='tight')
         plt.close()
         ```
         
-        Please provide a comprehensive answer with proper visualizations when requested.
+        Analysis Strategy:
+        - First, understand the column types to choose the right statistical method/plot.
+        - If the user asks for "trends" or "patterns", prioritize correlation or distribution analysis.
+        - Always provide a clear, textual summary of the insights found BEFORE or AFTER the visualization code.
         """
 
     def _process_response(self, response):

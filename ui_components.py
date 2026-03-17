@@ -235,8 +235,7 @@ def _handle_user_query(user_query, df):
     
     with st.chat_message("assistant"):
         with st.spinner("Analyzing your data..."):
-            df_info = {'shape': df.shape, 'columns': list(df.columns)}
-            response = st.session_state.agent.query(user_query, df_info)
+            response = st.session_state.agent.query(user_query, df)
             
             if response['success']:
                 st.markdown(response['output'])
