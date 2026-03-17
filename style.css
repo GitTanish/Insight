@@ -149,7 +149,10 @@ h2 {
     transition: all 0.2s ease !important;
 }
 
-.stButton>button:hover {
+.stButton>button:hover,
+.stButton>button:hover p,
+.stButton>button:hover span,
+.stButton>button:hover div {
     background-color: var(--ink-black) !important;
     color: var(--paper-base) !important;
 }
@@ -165,22 +168,34 @@ h2 {
 /* Forms & Inputs */
 .stTextInput > div > div > input, 
 .stNumberInput > div > div > input,
-[data-baseweb="select"] > div,
-[data-baseweb="select"] > div > div {
+div[data-baseweb="select"] > div,
+div[data-baseweb="select"] > div > div {
     background-color: var(--paper-base) !important;
     color: var(--ink-black) !important;
-    border: 1px solid var(--ink-black) !important;
+    border: 1px dashed var(--ink-black) !important;
     border-radius: 0 !important;
     font-family: 'Courier Prime', monospace !important;
 }
 
-[data-baseweb="popover"] {
+div[data-baseweb="popover"], 
+div[data-baseweb="popover"] > div,
+ul[data-baseweb="menu"], 
+ul[role="listbox"] {
     background-color: var(--paper-base) !important;
     border: 1px solid var(--ink-black) !important;
 }
 
-[data-baseweb="menu"] li {
+li[role="option"] span, li[role="option"] div, li[role="option"] {
     color: var(--ink-black) !important;
+    font-family: 'Courier Prime', monospace !important;
+}
+
+li[role="option"] {
+    background-color: transparent !important;
+}
+
+li[role="option"]:hover, li[role="option"][aria-selected="true"] {
+    background-color: rgba(139, 29, 29, 0.1) !important; /* light red accent */
 }
 
 /* Slider */
@@ -210,16 +225,39 @@ h2 {
     font-weight: 700 !important;
 }
 
-/* Chat Input Bar */
-[data-testid="stChatInput"] {
+/* Chat Input Bar & Bottom Container */
+[data-testid="stBottomBlockContainer"],
+[data-testid="stBottom"] {
+    background-color: transparent !important;
+}
+
+[data-testid="stBottom"] > div {
+    background-color: transparent !important;
+}
+
+.stChatInput, [data-testid="stChatInput"] {
     background-color: var(--paper-base) !important;
-    border: 2px solid var(--ink-black) !important;
+    border: 2px dashed var(--ink-black) !important;
     border-radius: 0 !important;
 }
 
-[data-testid="stChatInput"] textarea {
+.stChatInput textarea, .stChatInputTextArea textarea, [data-testid="stChatInputTextArea"] textarea {
+    background-color: transparent !important;
     color: var(--ink-black) !important;
     font-family: 'Courier Prime', monospace !important;
+    -webkit-text-fill-color: var(--ink-black) !important;
+}
+
+.stChatInput textarea::placeholder {
+    color: var(--ink-gray) !important;
+    opacity: 0.8 !important;
+    -webkit-text-fill-color: var(--ink-gray) !important;
+    font-family: 'Courier Prime', monospace !important;
+}
+
+[data-testid="stChatInput"] button {
+    background-color: transparent !important;
+    color: var(--ink-black) !important;
 }
 
 /* Kicker / Subheader */
