@@ -6,17 +6,16 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![AI](https://img.shields.io/badge/AI-Powered-purple.svg)
 
-**The Daily Insight: AI-Powered Data Analysis & Visualization Broadsheet**
+**AI-Powered Data Analysis & Visualization Agent**
 
-INSIGHT is an intelligent data analysis tool that allows you to upload CSV files and interact with your data using natural language queries. Powered by high-end LLMs via Groq API, it generates textual insights, creates **multiple ink-on-paper style visualizations**, and performs complex data analysis tasks through a beautifully crafted **Vintage Broadsheet** newspaper interface.
+INSIGHT is an intelligent data analysis tool that allows you to upload CSV files and interact with your data using natural language queries. Powered by high-end LLMs via Groq API, it generates textual insights, creates **multiple visualizations**, and performs complex data analysis tasks through an interactive conversational interface.
 
 ## ✨ Features
 
-- **Vintage Broadsheet Aesthetic**: An elite, tacticle editorial design featuring Playfair Display, EB Garamond, and a genuine aged-paper palette.
 - **Natural Language Queries**: Ask questions about your data in plain English.
 - **Multi-Plot Generation**: Generate and display multiple charts, graphs, and plots automatically per query.
 - **Data Quality Assessment**: Identify missing values, duplicates, and data types.
-- **Interactive Chat Interface**: Conversation-based data exploration presented as news clippings.
+- **Interactive Chat Interface**: Conversation-based data exploration.
 - **Multiple Model Support**: Choose from various high-end LLMs (e.g., Llama 3.3 70B, Qwen, Gemma 2).
 - **Secure Processing**: Sandboxed code execution for data analysis.
 
