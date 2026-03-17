@@ -1,4 +1,5 @@
 import os
+import datetime
 import streamlit as st
 from config import (
     MODEL_OPTIONS, DEFAULT_MODEL, DEFAULT_TEMPERATURE, 
@@ -271,11 +272,13 @@ def render_chat_interface(api_key, model, temperature, df):
     if st.session_state.get('history'):
         st.markdown("<br>", unsafe_allow_html=True)
         try:
-            docx_bytes = generate_export_docx(st.session_state.history)
+            dataset_name = st.session_state.get('uploaded_file_name', 'Dataset')
+            date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            docx_bytes = generate_export_docx(st.session_state.history, dataset_name, date_str)
             st.download_button(
                 label="📥 Export Final Report (DOCX)",
                 data=docx_bytes,
-                file_name="Insight_Analysis_Report.docx",
+                file_name=f"Insight_Report_{dataset_name.replace('.csv', '')}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True
             )

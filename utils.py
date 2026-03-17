@@ -131,24 +131,30 @@ def cleanup_plot_files():
                 pass  # Ignore cleanup errors
 
 
-def generate_export_docx(history):
+def generate_export_docx(history, dataset_name="Dataset", date_str=""):
     """Generate a DOCX file from the conversation history."""
     try:
         from docx import Document
-        from docx.shared import Inches
+        from docx.shared import Inches, Pt
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
     except ImportError:
         raise ImportError("Please install python-docx to use export features.")
         
     doc = Document()
-    doc.add_heading('The Daily Insight: Data Analysis Report', 0)
     
-    doc.add_heading('Conversation History', 1)
+    title = f"Insight Analysis Report — {dataset_name}"
+    if date_str:
+        title += f" — {date_str}"
+        
+    doc.add_heading(title, 0)
     
     if not history:
         doc.add_paragraph("No conversation history available.")
     
+    figure_count = 1
+    
     for msg in history:
-        role = "Investigations Reporter" if msg["role"] == "user" else "AI Analyst"
+        role = "You" if msg["role"] == "user" else "Insight"
         doc.add_heading(role, level=2)
         doc.add_paragraph(msg["content"])
         
@@ -157,6 +163,15 @@ def generate_export_docx(history):
                 if os.path.exists(plot_path):
                     try:
                         doc.add_picture(plot_path, width=Inches(6.0))
+                        
+                        caption_para = doc.add_paragraph(f"Figure {figure_count}: Analysis Visualization")
+                        caption_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        if caption_para.runs:
+                            caption_run = caption_para.runs[0]
+                            caption_run.italic = True
+                            caption_run.font.size = Pt(9)
+                            
+                        figure_count += 1
                     except Exception:
                         doc.add_paragraph(f"[Image failed to load: {plot_path}]")
                         
