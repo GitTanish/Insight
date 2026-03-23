@@ -27,13 +27,16 @@ Upload CSV  →  Ask in plain English  →  Get analysis + charts  →  Export .
 
 ## Screenshots
 
-| Upload & Configure | Ask Questions | Generated Charts | Exported Report |
-|---|---|---|---|
-| ![Upload](image/1.png) | ![Query](image/2.png) | ![Charts](image/3.png) | ![Report](image/4.png) |
+| Upload & Configure | Ask Questions |
+|---|---|
+| ![Upload](image/1.png) | ![Query](image/2.png) |
 
-## Report Download
+<br>
 
-![Download Report](image/download%20report%20demonstration.png)
+| Generated Charts | Exported Report |
+|---|---|
+| ![Charts](image/4.png) | ![Report](image/download%20report%20demonstration.png) |
+
 
 ---
 
