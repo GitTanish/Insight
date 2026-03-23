@@ -27,11 +27,13 @@ Upload CSV  →  Ask in plain English  →  Get analysis + charts  →  Export .
 
 ## Screenshots
 
-<!-- BEGIN SCREENSHOTS — agent will populate these -->
 | Upload & Configure | Ask Questions | Generated Charts | Exported Report |
 |---|---|---|---|
-| `assets/upload_csv.png` | `assets/ask_query.png` | `assets/chart_generated.png` | `assets/export_report.png` |
-<!-- END SCREENSHOTS -->
+| ![Upload](image/1.png) | ![Query](image/2.png) | ![Charts](image/3.png) | ![Report](image/4.png) |
+
+## Report Download
+
+![Download Report](image/download%20report%20demonstration.png)
 
 ---
 
