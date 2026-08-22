@@ -1,0 +1,96 @@
+<article class="turn assistant">
+    {% if response.error == 'plan_validation_failed' %}
+        <div class="bubble assistant-bubble error-bubble">{{ response.answer }}</div>
+    {% else %}
+        <div class="bubble assistant-bubble answer-md">{{ response.answer | markdown | safe }}</div>
+    {% endif %}
+
+    {% for plot in response.plots %}
+        <figure class="chart">
+            <img src="/artifacts/{{ data_id }}/{{ plot.path.split('/')[-1] }}" alt="{{ plot.title }}">
+            <figcaption>{{ plot.title }}</figcaption>
+        </figure>
+    {% endfor %}
+
+    <div class="chip-row">
+        <span class="chip"><span class="chip-key">model</span> {{ response.meta.get('model', '?') }}</span>
+        {% if response.meta.get('total_ms') is not none %}
+            <span class="chip"><span class="chip-key">total</span> {{ '{:,}'.format(response.meta['total_ms']) }} ms</span>
+        {% endif %}
+        {% if response.meta.get('planning_ms') is not none %}
+            <span class="chip"><span class="chip-key">breakdown</span>
+                plan {{ '{:,}'.format(response.meta.get('planning_ms', 0)) }} ·
+                exec {{ '{:,}'.format(response.meta.get('execution_ms', 0)) }} ·
+                explain {{ '{:,}'.format(response.meta.get('explaining_ms', 0)) }} ms</span>
+        {% endif %}
+        {% if response.meta.get('tokens_out') %}
+            <span class="chip"><span class="chip-key">tokens</span> {{ '{:,}'.format(response.meta['tokens_in']) }} → {{ '{:,}'.format(response.meta['tokens_out']) }}</span>
+        {% endif %}
+        {% if response.meta.get('repair_attempted') %}
+            <span class="chip chip-warn">⚠ self-repaired</span>
+        {% endif %}
+    </div>
+
+    {% set sql_step_ids = [] %}
+    {% for step in response.meta.get('steps', []) %}
+        {% if step.operation == 'sql_query' and step.success %}
+            {% set _ = sql_step_ids.append(step.step_id) %}
+        {% endif %}
+    {% endfor %}
+    {% if sql_step_ids %}
+        <div class="row-btns artifact-btns">
+            {% for sid in sql_step_ids[:2] %}
+                <form method="post" action="/export/dbt">
+                    <input type="hidden" name="step_id" value="{{ sid }}">
+                    <button type="submit" class="btn tiny">Export dbt model</button>
+                </form>
+                <a class="btn tiny" href="/export/alert?step_id={{ sid }}">Alert monitor</a>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if response.tables %}
+        <details class="evidence">
+            <summary>View calculation</summary>
+            {% for table in response.tables %}
+                <p class="mono-label">step {{ table.step_id }}: {{ table.name }}</p>
+                <table class="data-table">
+                    <thead><tr>{% for c in table.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+                    <tbody>
+                    {% for row in table.rows %}
+                        <tr>{% for v in row %}<td>{{ '' if v is none else v }}</td>{% endfor %}</tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% if table.truncated %}
+                    <p class="caption">(showing first rows of {{ '{:,}'.format(table.total_rows) }})</p>
+                {% endif %}
+            {% endfor %}
+        </details>
+    {% endif %}
+
+    {% if response.meta.get('steps') %}
+        <details class="evidence">
+            <summary>View plan</summary>
+            <p class="mono-label">objective: {{ response.meta.get('objective', '') }}</p>
+            {% for step in response.meta.get('steps', []) %}
+                {% set params = step.params %}
+                {% set reason = params.reason %}
+                <p class="plan-line">
+                    <b>{{ step.step_id }} · <code>{{ step.operation }}</code></b>
+                    {%- if reason %} — {{ reason }}{% endif -%}
+                    {%- if not step.success %} · <span class="fail">failed</span>{% endif -%}
+                </p>
+                {% set clean = dict(params) %}
+                {% if 'reason' in clean %}{% set _ = clean.pop('reason') %}{% endif %}
+                {% if clean %}<pre class="params-json">{{ clean | tojson(indent=2) }}</pre>{% endif %}
+            {% endfor %}
+        </details>
+    {% endif %}
+
+    {% set warning_items = [] %}
+    {% for e in response.evidence %}{% if e.kind == 'warning' %}{% if warning_items.append(e.label) %}{% endif %}{% endif %}{% endfor %}
+    {% if warning_items %}
+        <div class="warn-box">⚠ {{ warning_items[:3] | join(' · ') }}{% if warning_items | length > 3 %} (+{{ warning_items | length - 3 }} more){% endif %}</div>
+    {% endif %}
+</article>

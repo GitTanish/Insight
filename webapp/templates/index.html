@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="layout">
+
+    <aside class="rail">
+        <div class="card">
+            <h3 class="card-title">Configuration</h3>
+            {% if request.query_params.get('flash') %}
+                <div class="alert alert-error">{{ request.query_params.get('flash') }}</div>
+            {% endif %}
+            <form action="/upload" method="post" enctype="multipart/form-data" class="stack">
+                <label>Upload CSVs (joins welcome)
+                    <input type="file" name="files" accept=".csv" multiple required>
+                </label>
+                <button type="submit" class="btn">Upload</button>
+            </form>
+            {% if session.uploaded_name %}
+                <div class="ok-note">{{ session.uploaded_name }} loaded</div>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h3 class="card-title">Model</h3>
+            {% if models %}
+            <select id="model-select">
+                {% for m in models %}
+                    <option value="{{ m.model_id }}" {% if m.model_id == selected_model %}selected{% endif %}>
+                        {{ m.model_id }} · {{ m.tier }}
+                    </option>
+                {% endfor %}
+            </select>
+            {% else %}
+            <p class="provider-note">No provider configured. Add an API key to .env.</p>
+            {% endif %}
+            <form action="/models/refresh" method="post">
+                <button type="submit" class="btn tiny">Refresh models</button>
+            </form>
+            <label class="range-label">Temperature
+                <input id="temp-range" type="range" min="0" max="1" step="0.1" value="{{ temperature }}">
+                <span id="temp-val">{{ temperature }}</span>
+            </label>
+        </div>
+
+        <details class="card">
+            <summary>Provider status</summary>
+            {% for p in providers %}
+                <div class="provider-row">{{ p.dot }} {{ p.name }}
+                    <span class="provider-note">— {{ p.state }}</span>
+                </div>
+            {% endfor %}
+        </details>
+
+        <div class="row-btns">
+            {% if session.turns %}
+                <a class="btn" href="/export/docx">Export DOCX</a>
+            {% endif %}
+            <form action="/clear" method="post">
+                <button type="submit" class="btn">Clear</button>
+            </form>
+        </div>
+
+        <details class="card">
+            <summary>How Insight works</summary>
+            <ul class="how-list">
+                <li>The LLM <b>plans</b> an analysis — it never executes code</li>
+                <li>A <b>deterministic pandas engine</b> computes every number</li>
+                <li>A <b>validator</b> checks results before you see them</li>
+                <li>Every claim links to its calculation</li>
+            </ul>
+        </details>
+        <p class="caption privacy">Your CSV contents are sent to the selected LLM provider as context.</p>
+    </aside>
+
+    <main class="sheet">
+        {% if session.profile %}
+            {% include "partials/_overview.html" %}
+        {% else %}
+            <div class="hero drop-cap">
+                Welcome to the front page of your data. Upload a CSV on the left, then consult
+                our automated desk of analysts: they will profile your records, plan a rigorous
+                investigation, compute every figure with deterministic engines, and verify the
+                results before printing a word.
+            </div>
+            <h2 class="section-h">Sample Questions</h2>
+            <ul class="samples">
+                <li>Show summary statistics for every numeric column</li>
+                <li>Which category is most frequent?</li>
+                <li>Are there any outliers?</li>
+                <li>How does revenue trend over time?</li>
+            </ul>
+            <hr>
+        {% endif %}
+
+        {% if session.findings %}
+            {% include "partials/_briefing.html" %}
+        {% endif %}
+
+        <div class="quick-actions">
+            <button class="btn qa" data-q="Summarize this dataset: key statistics, distributions, and anything unusual.">Data Summary</button>
+            <button class="btn qa" data-q="Create 2-3 informative visualizations from this data.">Visualize</button>
+            <button class="btn qa" data-q="Identify the top 3 most interesting patterns in this dataset.">Find Patterns</button>
+            <button class="btn qa" data-q="Assess data quality: missing values, duplicates, outliers, inconsistencies.">Quality Check</button>
+        </div>
+
+        <section id="chat">
+            {% for turn in session.turns %}
+                <div class="turn user"><div class="bubble user-bubble">{{ turn.question }}</div></div>
+                {% with response = turn.response %}{% include "partials/_assistant.html" %}{% endwith %}
+            {% endfor %}
+        </section>
+
+        <div id="pipeline-status" class="pipeline hidden"></div>
+
+        <form id="composer" class="composer">
+            <textarea name="question" rows="2" placeholder="Ask a question about your data..." required></textarea>
+            <button type="submit" class="btn send">Dispatch</button>
+        </form>
+        <p class="caption center">LLM plans · pandas computes · validator verifies · every claim links to its calculation.</p>
+    </main>
+</div>
+{% endblock %}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Insight — The Daily Data Edition</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="masthead-band">
+    <span>Established 2026</span>
+    <span>The Daily Insight : Data Edition</span>
+    <span>Verified by Deterministic Engines</span>
+</header>
+
+<div class="masthead-title">
+    {% if has_logo %}
+        <img src="/static/logo.png" alt="Insight" class="logo-img">
+    {% else %}
+        <h1 class="paper-h1">THE INSIGHT</h1>
+    {% endif %}
+</div>
+<hr class="double">
+
+{% block content %}{% endblock %}
+
+<script src="/static/app.js" defer></script>
+</body>
+</html>

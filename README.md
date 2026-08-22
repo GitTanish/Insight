@@ -1,27 +1,84 @@
 # INSIGHT 📊
-### AI-Powered Data Analysis Agent
+### A validated, model-agnostic analytical agent
 
-[![Python](https://img.shields.io/badge/python-v3.8+-blue.svg)](https://python.org)
-[![Streamlit](https://img.shields.io/badge/streamlit-1.28+-red.svg)](https://streamlit.io)
-[![LangChain](https://img.shields.io/badge/langchain-latest-green.svg)](https://langchain.com)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-teal.svg)](https://fastapi.tiangolo.com)
+[![Pydantic](https://img.shields.io/badge/pydantic-v2-green.svg)](https://docs.pydantic.dev)
+[![Tests](https://img.shields.io/badge/tests-148%20passing-brightgreen.svg)](#5-run-the-test-suite-optional-but-encouraged)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen.svg)](https://the-insight-ai.streamlit.app/)
 
-Upload a CSV. Ask anything in plain English. Get newspaper-styled charts and a formatted Word report — no code required.
+Upload a CSV — or drop four related ones. Ask anything in plain English. Get verified answers, newspaper-styled charts, a formatted Word report, and production-ready dbt/alert exports.
 
 **[→ Try the live demo](https://the-insight-ai.streamlit.app/)**
 
 ---
 
-## What it does
+## Proof, not promises
 
-Insight is a conversational data analyst. You bring the data, it brings the reasoning. Under the hood, a LangChain Pandas Agent executes Python against your dataset in a sandboxed environment — you just ask questions.
+Measured on this repo during development — not aspirational numbers:
 
-The full loop:
+| Anchor metric | What it proves |
+|---|---|
+| **20/20** golden-question eval cases passed live (Groq · Mistral · oxalpha) | the no-invented-numbers policy holds end-to-end |
+| **250K rows**: profiled in **2.0s**, heaviest op **<2s**, bivariate OLS in **125ms** | deterministic engine at real scale, not toy data |
+| **−31.7% Brier score** after isotonic recalibration; over-confidence flagged at **ECE = 0.245** | calibration audits quantify, not guess |
+| **≤0.13% aggregate drift** under 5% MCAR missingness → graceful **0.60% @ 35%**, with explicit MCAR caveats | honest missing-data behavior, surfaced not hidden |
+| Engine answered diamonds' top cut as **Premium ($4,584 avg)** where LLM priors say *Ideal* | computed evidence beats model priors |
+| **8/8 malicious SQL patterns blocked** (`DROP`, `COPY TO`, `ATTACH`, `PRAGMA`, chained statements…) + hard **10s interrupt** on runaway queries | read-only relational analytics you can hand to an LLM |
+| **148 offline tests**, CI-green with zero API keys, every headline number independently recomputed through a second arithmetic path | verified by construction |
+
+---
+
+## How it works
+
+Insight v2 is built on one principle: **the LLM is not the analytics engine.**
 
 ```
-Upload CSV  →  Ask in plain English  →  Get analysis + charts  →  Export .docx report
+Upload CSV
+    ↓
+Dataset Profiler ──► types, missingness, cardinality → dataset fingerprint
+    ↓
+Zero-Prompt Briefing ──► top-3 findings immediately, no question needed
+    ↓                    (outliers · trends · correlations · imbalance · quality)
+Planner (LLM) ────► JSON AnalysisPlan ──► schema + column validated
+    ↓                                   └─ invalid? bounded repair loop
+Deterministic Engine ──► 15 operations (14 fixed pandas/scipy ops + embedded
+    ↓                     DuckDB SQL) chained via input_step DAG
+Statistical Router ──► Welch t-test / Mann-Whitney U / chi-square + Cramér's V
+    ↓                    / one-way ANOVA + η² — auto-routed by column types
+Result Validator ──► non-finite values, empty results, small samples,
+    ↓                 missingness caveats (MCAR assumption) + INDEPENDENT
+    ↓                 RECOMPUTATION of every headline number through a
+    ↓                 second arithmetic path
+Conversation State ──► active filters/dims/metrics persist across turns;
+    ↓                    follow-ups become filter patches, not re-interpretation
+Explainer (LLM) ──► narrative citing only computed values
+    ↓
+Answer + Evidence + Charts ──► streamed live (SSE) · exportable as .docx
 ```
+
+Every claim in an answer traces back to a calculation you can inspect via **View calculation**, and every plan step is auditable via **View plan**. If a plan fails validation or execution, the orchestrator repairs and retries — once — then tells you exactly what went wrong instead of hallucinating.
+
+---
+
+## Features
+
+- **Zero-prompt briefing** — the moment a CSV lands, deterministic detectors surface the three most important findings (trend breaks, outliers, strong correlations, class imbalance, data quality), each with an *Investigate* button.
+- **Verified answers** — a validator checks sanity and small-sample caveats; an independent recomputation layer re-derives aggregates through a second code path and flags any mismatch before you see the answer.
+- **Statistical tests without statistics mistakes** — binary-vs-numeric questions route to Welch's t-test or Mann–Whitney U with Cohen's d and plain-language group differences ("Class 1 averages 32% lower"); categorical pairs get chi-square with Cramér's V; 3+ groups vs numeric route to one-way ANOVA with η². Point-biserial correlation traps are actively blocked.
+- **Regression & calibration** — OLS via `np.linalg.lstsq` with t-stat p-values, R² and standardized betas; `isotonic_calibration` audits whether a score truly tracks a binary outcome (PAV fit, reliability table, Brier before/after recalibration, ECE).
+- **Honest missing-data handling** — every op coerces/drops explicitly; listwise deletions are reported (`rows_excluded_incomplete`, mixed count bases flagged), and referenced columns >5% missing raise an explicit MCAR-assumption caveat in the answer.
+- **Conversation state machine** — filters applied in earlier turns persist as structured state; "now only 2025" becomes a filter patch instead of the model re-guessing context.
+- **Relational analytics on embedded DuckDB** — drop 2–6 related CSVs and ask for JOINs, window functions, per-group rankings and pivots via the sandboxed `sql_query` op: in-memory only, external access disabled, config locked, SELECT/WITH-only with keyword guards, interrupt-based timeout, hard row caps. Runtime errors flow straight into the existing plan-repair loop — self-correction without a code interpreter.
+- **Actionable artifact exports** — any SQL answer ships two buttons: **Export dbt model** (a `.sql` model + `schema.yml` with column tests, zipped) and **Alert monitor** (a Slack-ready webhook monitor descriptor with the query, cron schedule and payload template).
+- **Chained "why" analysis** — plans are DAGs: `filter_rows → group_aggregate → statistical_test` compose via explicit `input_step` references.
+- **Editorial charts that never look broken** — adaptive Freedman–Diaconis/Sturges binning, sparse-bin merging, cardinality-aware titles, automatic "Other" bucketing for long tails, horizontal-bar fallback for long labels, human tick formatting (12.5K / 3.2M).
+- **Model-agnostic plug-and-play** — Groq, Mistral, OpenAI, Anthropic, OpenRouter, Ollama, or any OpenAI-compatible endpoint via env vars. Automatic cross-provider fallback on rate limits.
+- **Live pipeline streaming** — watch *Planning → Executing → Validating → Explaining* happen in real time over SSE.
+- **Headless JSON API** — `POST /api/query` exposes the same verified pipeline for scripts and integrations.
+- **Query-result cache** — identical (dataset hash, question, model, temperature, session state) hits are served from `.artifacts/cache/` with TTL + size-budget eviction (`INSIGHT_QUERY_CACHE=off` to disable).
+- **Golden-question eval harness** — 20 seeded/real benchmark cases (incl. the 54K-row diamonds dataset and a 250K-row synthetic retail set) with exact ground truth; `python evaluation/run_eval.py --model <id>` produces a per-case PASS/FAIL markdown report.
+- **Observability** — optional LangSmith tracing of every plan, step, and LLM call.
 
 ---
 
@@ -31,150 +88,263 @@ Upload CSV  →  Ask in plain English  →  Get analysis + charts  →  Export .
 |---|---|
 | ![Upload](image/1.png) | ![Query](image/2.png) |
 
-<br>
-
 | Generated Charts | Exported Report |
 |---|---|
 | ![Charts](image/4.png) | ![Report](image/download%20report%20demonstration.png) |
-
-
----
-
-## Features
-
-**Conversational analysis**
-Ask questions the way you'd ask a colleague. "What columns have missing data?", "Show me the correlation between price and quantity", "Which category has the highest average revenue?" — the agent figures out the code, runs it, and explains the result.
-
-**Newspaper-aesthetic visualisations**
-Every chart is rendered in a consistent vintage editorial style — `#f2ead8` paper background, ink-black axes, muted classic palette, serif fonts where available. Charts look like they belong in a printed report, not a Jupyter notebook.
-
-**Multi-plot responses**
-Complex queries can generate up to 5 charts in a single response, each saved and displayed inline. Scatter plots, histograms, box plots, correlation matrices — whatever the data calls for.
-
-**Docx export**
-Export the full conversation — questions, analysis, and embedded charts — as a formatted Word document. The report preserves the newspaper aesthetic: charts print exactly as they appear on screen.
-
-**Multiple model support**
-Switch between Groq-hosted models depending on the task:
-- `llama3-70b-8192` — best accuracy (default)
-- `llama3-8b-8192` — faster responses
-- `mistral-saba-24b` — alternative reasoning style
-- `compound-beta` — experimental
-
-**Adjustable temperature**
-0.0 for deterministic analysis, up to 1.0 for exploratory pattern-finding.
-
----
-
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| UI | Streamlit |
-| Agent | LangChain Pandas Agent |
-| LLM inference | Groq API (Llama 3, Mistral) |
-| Data | Pandas |
-| Visualisation | Matplotlib · Seaborn |
-| Export | python-docx |
-| Config | python-dotenv |
-
----
-
-## Architecture
-
-```
-main.py                  — App entry point, session management, layout
-├── agent.py             — DataAnalysisAgent class, LLM orchestration, plot generation
-├── ui_components.py     — All Streamlit rendering logic
-├── utils.py             — DataFrame loading, session state helpers
-├── config.py            — Model list, temperature bounds, app constants
-└── style.css            — Custom Streamlit component styling
-```
-
-**Agent flow for each query:**
-
-```
-User query
-    ↓
-Enhanced prompt (includes df metadata + vintage chart instructions)
-    ↓
-LangChain Pandas Agent (executes Python in sandbox)
-    ↓
-Text analysis  +  temp_plot_N_1.png … temp_plot_N_5.png
-    ↓
-Rendered in chat  →  optionally exported to .docx
-```
-
-The agent is initialised once per config tuple `(api_key, model, temperature)` and cached — reinitialisation only happens when settings change.
 
 ---
 
 ## Quickstart
 
-**Prerequisites:** Python 3.8+, a free [Groq API key](https://console.groq.com)
+**Prerequisites:** Python 3.10+ (3.11 recommended) and a free [Groq API key](https://console.groq.com).
+
+### 1. Clone and set up a virtual environment
 
 ```bash
 git clone https://github.com/GitTanish/Insight.git
 cd Insight
+
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# macOS / Linux
+source .venv/bin/activate
+```
+
+### 2. Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-Set your API key:
+### 3. Add your API key (or keys)
+
+Copy the template and fill in whichever providers you use:
+
 ```bash
-echo "GROQ_API_KEY=your_key_here" > .env
+cp .env.example .env
 ```
 
-Run:
+Minimum viable setup:
+
+```bash
+# Required — pick at least one provider
+GROQ_API_KEY=gsk_your_key_here
+
+# Optional — any of these unlock additional models + cross-provider fallback
+MISTRAL_API_KEY=your_key_here
+OPENAI_API_KEY=your_key_here
+ANTHROPIC_API_KEY=your_key_here
+OPENROUTER_API_KEY=your_key_here
+```
+
+Or export directly:
+
+```bash
+# Windows
+set GROQ_API_KEY=gsk_your_key_here
+# macOS / Linux
+export GROQ_API_KEY=gsk_your_key_here
+```
+
+### 4. Run
+
+**Primary — FastAPI web server:**
+
+```bash
+uvicorn webapp.app:app --port 8000
+```
+
+Open `http://localhost:8000`. You get the full editorial UI plus live pipeline streaming (Planning → Executing → Validating → Explaining) and a JSON API at `POST /api/query`.
+
+**Alternative — classic Streamlit UI:**
+
 ```bash
 streamlit run main.py
 ```
 
-Open `http://localhost:8501` — upload a CSV and start asking.
+Both front-ends share the same `insight/` engine.
+
+### 5. Run the test suite (optional but encouraged)
+
+```bash
+pytest
+```
+
+85 unit/integration tests cover the profiler, every analytics operation (including statistical routing), the DAG executor, the validator + independent recomputation layer, planner repair loops, chart rendering rules, the briefing engine, conversation state, the query cache, and the FastAPI webapp end-to-end — all via a scripted fake LLM, no API key needed. A separate `eval`-marked live suite (`INSIGHT_RUN_EVAL=1 pytest -m eval`) exercises the golden-question harness against a real provider.
+
+### Evaluation harness (optional)
+
+Benchmark the full pipeline against deterministic datasets with known ground truth:
+
+```bash
+python evaluation/generate_datasets.py          # writes sales/ecommerce/support/retail_250k CSVs
+python evaluation/run_eval.py --model groq/openai/gpt-oss-120b
+# → per-case PASS/FAIL + markdown report under .artifacts/eval/
+```
 
 ---
 
-## Example queries
+## Providers (plug and play)
 
-```
-"What are the top 3 most interesting patterns in this dataset?"
-"Show me a histogram of the sales column"
-"Which month had the highest revenue?"
-"Find all rows where quantity > 100 and price < 50"
-"Create a correlation matrix for all numeric columns"
-"Are there any outliers in the age column?"
-"What's the average cost efficiency grouped by category?"
+Insight is **model-agnostic**: every provider sits behind one `LLMProvider` interface, and the app auto-detects whichever you configure. Set any subset of these in `.env` — missing keys simply hide that provider.
+
+| Provider | Key | Models |
+|---|---|---|
+| **Groq** *(default)* | `GROQ_API_KEY` | gpt-oss-120b / gpt-oss-20b, qwen3.6-27b |
+| **Mistral** | `MISTRAL_API_KEY` | mistral-small / medium-latest |
+| **OpenAI** | `OPENAI_API_KEY` | gpt-4o family + live discovery |
+| **Anthropic** | `ANTHROPIC_API_KEY` | Claude models + live discovery |
+| **OpenRouter** | `OPENROUTER_API_KEY` | 400+ aggregated models, curated discovery |
+| **Ollama** (local) | `OLLAMA_BASE_URL` or `INSIGHT_ENABLE_OLLAMA=1` | whatever you have pulled |
+| **Any OpenAI-compatible service** | `INSIGHT_CUSTOM_BASE_URL` + `INSIGHT_CUSTOM_API_KEY` (+ `INSIGHT_CUSTOM_MODELS`) | DeepSeek, Together, Fireworks, vLLM, LM Studio… |
+
+See [.env.example](.env.example) for the full template. Model capabilities (JSON mode, reasoning effort) are declared per model; the orchestrator strips unsupported parameters automatically and falls back across providers when a 429/5xx hits. Copy `.env.example` to `.env` and fill in what you have:
+
+```bash
+cp .env.example .env
 ```
 
 ---
 
 ## Configuration
 
-| Variable | Description | Required |
-|---|---|---|
-| `GROQ_API_KEY` | Groq API key (starts with `gsk_`) | Yes |
+File limits: up to 1,000,000 rows · encodings UTF-8/Latin-1/CP1252 · delimiters `,` `;` `\t`.
 
-**File limits:**
-- Max rows: 1,000,000
-- Encodings: UTF-8, Latin-1, CP1252
-- Delimiters: comma, semicolon, tab
+| Variable | Default | Purpose |
+|---|---|---|
+| `INSIGHT_SQL` | `on` | enable the embedded DuckDB `sql_query` op |
+| `INSIGHT_SQL_TIMEOUT_S` | `10` | hard interrupt for runaway queries |
+| `INSIGHT_SQL_MAX_ROWS` | `10000` | result-set cap before display truncation |
+| `INSIGHT_QUERY_CACHE` | `on` | cache identical (dataset, question, model, temp, state) results under `.artifacts/cache/` |
+| `INSIGHT_QUERY_CACHE_TTL_DAYS` | `14` | cache entries older than this are evicted |
+| `INSIGHT_QUERY_CACHE_MAX_MB` | `512` | size budget; oldest entries evicted first |
+| `INSIGHT_BRIEFING_LLM_POLISH` | `off` | one extra fast LLM call to sharpen briefing headlines (numbers frozen) |
+
+**Deployment note:** the webapp is single-worker by design — sessions (CSV bytes, profile, turns) live in process memory. Run exactly one uvicorn worker; horizontal scaling requires externalizing session state first. Put a TLS-terminating reverse proxy in front before exposing beyond localhost; there is no built-in auth or rate limiting.
 
 ---
 
+## Project structure
+
+```
+webapp/                  FastAPI UI (primary)
+├── app.py               routes: upload / SSE query stream / export / JSON API / models refresh
+├── sessions.py          cookie-keyed server-side sessions (single-worker)
+├── services.py          Streamlit-free CSV/profile helpers
+├── templates/           Jinja2 (base, index, partials)
+└── static/              editorial CSS + SSE client glue
+main.py                  Streamlit entry point (legacy UI, same engine)
+├── ui_components.py     Streamlit rendering layer
+├── utils.py             cached wrappers (delegates DOCX to insight/reports)
+├── style.css            editorial styling
+├── insight/             ← the engine (UI-agnostic)
+│   ├── domain/          Pydantic v2 contracts: profiles, plans, results, errors
+│   ├── llm/             Provider ABC, OpenAI-compatible base, Groq/Mistral/OpenRouter/..., registry
+│   ├── profiling/       Dataset profiler + fingerprinting
+│   ├── planning/        Planner (structured output + repair), prompt builders
+│   ├── analytics/       Deterministic operation library (15 ops incl. DuckDB sql_query)
+│   ├── briefing.py      zero-prompt top-findings engine (+ optional LLM polish flag)
+│   ├── conversation/    AnalysisSessionState — filters/dims/metrics across turns
+│   ├── execution/       Plan executor (sync core, async wrapper, input_step DAG)
+│   ├── validation/      Result validator + independent recomputation checks
+│   ├── cache.py         query-result cache (TTL + size-budget eviction)
+│   ├── reports/         shared DOCX builder + dbt/alert artifact generators
+│   ├── visualization/   Editorial theme + chart renderer from ChartSpec
+│   └── orchestrator.py  plan → execute → validate → repair → render → explain (+ streaming variant)
+├── evaluation/          golden-question harness: generator, 20 cases, scorer/reporter
+└── tests/               pytest suite (fake LLM, zero network needed)
+```
+
+The `insight/` package is deliberately UI-agnostic — both front-ends call it through one function. The FastAPI app additionally exposes the pipeline as an SSE stream and a JSON API, so CLIs and future clients reuse the exact same verified engine.
+
+---
+
+## Example queries
+
+```
+"Which region has the highest revenue?"
+"Why did revenue fall between Q2 and Q3?"            ← chained DAG plan
+"Join orders to customers and rank each customer's biggest order"  ← DuckDB window fn
+"Is the conversion difference between groups real?"  ← auto t-test / Mann-Whitney
+"Do handle times differ across priority levels?"     ← auto one-way ANOVA + η²
+"How strongly do price and carat weight correlate?"  ← Pearson/Spearman
+"Audit whether lead_score predicts conversion well"  ← isotonic calibration + ECE
+"Are treatment and churn associated?"                ← chi-square + Cramér's V
+"Create 2-3 visualizations of this data"
+"Are there outliers in the price column?"
+"What correlates most strongly with quantity?"
+"Compare average order value between 2024 and 2025"
+```
+
+Every response includes:
+- **Answer** — narrative citing only computed numbers, with significance stated where tests ran
+- **Charts** — consistent ink-on-paper editorial style
+- **View calculation** — the exact result tables behind the claims
+- **View plan** — the validated step DAG with parameters and reasons
+- **Warnings** — consolidated caveats (small samples, sparse bins, excluded binary correlations)
+
+Export everything — including the upload briefing — as a formatted Word report.
+
+---
+
+## Methods & references
+
+Every statistical claim above is a textbook method executed by deterministic code (`insight/analytics/`). The papers behind them:
+
+**Classical inference** — *Welch's t-test* (Welch, 1947, *Biometrika*), *Mann–Whitney U* (Mann & Whitney, 1947), *chi-square independence* (Pearson, 1900), *Cramér's V* with bias correction (Cramér, 1946), *one-way ANOVA F-test* (Fisher, 1925), t-distribution p-values (Student, 1908). Effect sizes follow Cohen's conventions — Cohen's d (Cohen, 1988) and η² benchmarks (Cohen, 1973).
+
+**Regression** — OLS via least squares (Legendre, 1805; Gauss), coefficient standard errors from σ²(XᵀX)⁻¹, standardized betas and adjusted R² per Montgomery, Peck & Vining, *Introduction to Linear Regression Analysis*.
+
+**Distribution & outliers** — adaptive binning blends Sturges' rule (Sturges, 1926, *JASA*) with the Freedman–Diaconis rule (Freedman & Diaconis, 1981); outlier fences use Tukey's 1.5×IQR rule (*Exploratory Data Analysis*, 1977). Rank-based association via Spearman (1904).
+
+**Probability calibration** — `isotonic_calibration` implements the pool-adjacent-violators algorithm (Ayer et al., 1955; Robertson, Wright & Dykstra, *Order Restricted Statistical Inference*, 1988), scored by the Brier score (Brier, 1950) and expected calibration error in the style of Guo et al. (2017), following the score-to-probability calibration literature (Zadrozny & Elkan, 2002; Niculescu-Mizil & Caruana, 2005).
+
+**LLM reliability patterns** — the planner-emits-plan / engine-computes split follows program-aided language models (Gao et al., *PAL*, ICML 2023); bounded plan-repair mirrors iterative self-refinement (Madaan et al., *Self-Refine*, NeurIPS 2023); independent recomputation of every headline number is an application of chain-of-verification ideas (Dhuliawala et al., 2023).
+
 ## Security note
 
-The LangChain Pandas Agent executes Python code to answer queries. Execution is sandboxed within the Streamlit environment. Only upload CSV files you trust, and avoid datasets containing sensitive personal information.
+Your CSV contents are sent to the configured LLM provider as context. The LLM **never executes code**: all computation happens through a fixed library of pandas operations inside your own process. Don't upload datasets containing sensitive personal information you wouldn't paste into a chat model.
 
 ---
 
 ## Troubleshooting
 
-**"Agent stopped due to max iterations"** — query is too broad. Try something more specific, e.g. *"histogram of column X"* rather than *"analyse everything"*.
+**`No provider available`** — no `GROQ_API_KEY`/`MISTRAL_API_KEY` found in `.env` or environment.
 
-**"Invalid API key format"** — key must start with `gsk_`. Get one free at [console.groq.com](https://console.groq.com).
+**`unknown column 'x'` in the answer** — the model referenced a column that doesn't exist; the repair loop already retried. Rephrase using exact column names from the profile expander.
 
-**Charts not appearing** — the agent saves plots to the working directory. Ensure the app has write permissions in the project folder.
+**Rate limit errors** — Groq free tier allows 30 requests/min on gpt-oss models. Wait a moment, switch to `gpt-oss-20b`, or add a Mistral key for fallback.
 
-**Slow responses** — switch to `llama3-8b-8192` in the sidebar for faster (slightly less accurate) responses.
+**Charts not appearing** — check the `.artifacts/web/<session>/` folder is writable; render warnings appear under answers.
+
+**Slow first load** — provider model catalogs are scanned on startup (~10s, cached); the dataset profile and briefing compute once per upload.
+
+**Streamlit vs webapp sessions** — each front-end keeps its own session state; uploads don't transfer between them.
+
+---
+
+## Observability
+
+Set `LANGSMITH_API_KEY` (and optionally `LANGSMITH_PROJECT`) to enable full tracing via [LangSmith](https://smith.langchain.com). Every question produces a root `insight.analyze` run containing:
+
+- the validated **plan** JSON (with repair attempts visible as failed→retried children),
+- one **LLM span per provider call** (model, tokens, latency, retries),
+- step-level execution results and validation outcomes.
+
+Tracing is fully optional — with no key the engine runs identically and posts nothing.
+
+---
+
+## Roadmap
+
+Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅
+
+**Up next** (detailed notes in [HANDOVER.md](HANDOVER.md)):
+
+- External session storage (Redis) for multi-worker deployments
+- MAR/MNAR-aware missingness diagnostics (currently MCAR assumption is surfaced as a caveat)
+- Streaming cache for the SSE path; PDF export remains deferred
 
 ---
 
@@ -187,6 +357,8 @@ git push origin feature/your-feature
 # open a pull request
 ```
 
+Run `pytest` before submitting — CI-friendly, no keys required.
+
 ---
 
 ## Author
@@ -195,4 +367,4 @@ git push origin feature/your-feature
 
 ---
 
-*Built with [Groq](https://groq.com) · [LangChain](https://langchain.com) · [Streamlit](https://streamlit.io)*
+*Built with [Groq](https://groq.com) · [Pydantic](https://docs.pydantic.dev) · [FastAPI](https://fastapi.tiangolo.com) · pandas · scipy*

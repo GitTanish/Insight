@@ -5,3 +5,10 @@ __pycache__
 
 # Ignore agent generated plots
 temp_plot_*.png
+
+# Insight v2 artifacts
+.artifacts/
+.pytest_cache/
+
+# Eval datasets are generated (generate_datasets.py + diamonds fetch)
+evaluation/data/

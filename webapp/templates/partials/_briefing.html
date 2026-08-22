@@ -1,0 +1,10 @@
+<div class="kicker">Morning Edition</div>
+<h2 class="section-h">II. Top Findings — Zero-Prompt Briefing</h2>
+{% for finding in session.findings %}
+    <div class="finding-card">
+        <span class="chip"><span class="chip-key">{{ finding.category }}</span></span>
+        <b>{{ finding.title }}</b><br>
+        <span class="provider-note">{{ finding.detail }}</span>
+        <button class="btn qa tiny" data-q="{{ finding.suggested_query }}">Investigate</button>
+    </div>
+{% endfor %}

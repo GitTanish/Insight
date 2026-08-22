@@ -335,3 +335,82 @@ header {
 header button [data-testid="stIconMaterial"] {
     color: var(--ink-black) !important;
 }
+
+/* ---- Insight v2 polish: chips, badges, plan & provider furniture ---- */
+
+.chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0.75rem 0 0.25rem 0;
+}
+
+.chip {
+    font-family: 'Courier Prime', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    color: var(--ink-gray);
+    border: 1px solid var(--border-ink);
+    background-color: rgba(232, 221, 196, 0.55);
+    padding: 2px 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.chip-key {
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--ink-black);
+}
+
+.chip-warn {
+    color: var(--newspaper-red) !important;
+    border-color: var(--newspaper-red);
+    background-color: rgba(139, 29, 29, 0.07);
+}
+
+.provider-row {
+    font-family: 'Courier Prime', monospace;
+    font-size: 0.78rem;
+    display: block;
+    padding: 2px 0;
+}
+
+.provider-note {
+    color: var(--ink-gray);
+    font-size: 0.7rem;
+}
+
+.fingerprint {
+    margin: 0.4rem 0 0.8rem 0;
+    letter-spacing: 0.05em;
+}
+
+.fingerprint b {
+    color: var(--ink-black);
+}
+
+.hero-copy {
+    font-size: 1.15rem;
+    max-width: 70ch;
+    margin: 0 auto;
+    padding: 0.5rem 0 1rem 0;
+}
+
+.stChatMessageContent code {
+    background-color: rgba(26, 26, 27, 0.06) !important;
+    font-family: 'Courier Prime', monospace !important;
+}
+
+div[data-testid="stCodeBlock"] pre {
+    background-color: rgba(26, 26, 27, 0.04) !important;
+    border: 1px solid var(--border-ink);
+}
+
+.finding-card {
+    border-left: 3px solid var(--newspaper-red);
+    background-color: rgba(232, 221, 196, 0.45);
+    padding: 0.6rem 0.9rem;
+    margin: 0.4rem 0 0.6rem 0;
+}

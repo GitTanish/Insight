@@ -1,0 +1,41 @@
+<div class="kicker">Special Report</div>
+<h2 class="section-h">I. Current State of the Records — {{ session.profile.name }}</h2>
+
+<div class="metric-grid">
+    <div class="metric"><div class="metric-label">Rows</div><div class="metric-value">{{ '{:,}'.format(session.profile.row_count) }}</div></div>
+    <div class="metric"><div class="metric-label">Columns</div><div class="metric-value">{{ session.profile.column_count }}</div></div>
+    <div class="metric"><div class="metric-label">Missing Cells</div><div class="metric-value">{{ '{:,}'.format(session.profile.missing_cells) }}</div></div>
+    <div class="metric"><div class="metric-label">Memory</div><div class="metric-value">{{ '%.1f'|format(session.profile.memory_mb) }} MB</div></div>
+</div>
+<div class="metric-grid">
+    <div class="metric"><div class="metric-label">Duplicates</div><div class="metric-value">{{ '{:,}'.format(session.profile.duplicate_rows) }}</div></div>
+    {% set roles = session.profile.columns | map(attribute='role.value') | list %}
+    <div class="metric"><div class="metric-label">Numeric</div><div class="metric-value">{{ roles.count('numeric') }}</div></div>
+    <div class="metric"><div class="metric-label">Categorical</div><div class="metric-value">{{ roles.count('categorical') }}</div></div>
+    <div class="metric"><div class="metric-label">Datetime</div><div class="metric-value">{{ roles.count('datetime') }}</div></div>
+</div>
+
+<p class="mono-label fingerprint">
+    dataset_id <b>{{ session.profile.fingerprint.dataset_id }}</b> ·
+    schema <b>{{ session.profile.fingerprint.schema_hash[:10] }}</b> ·
+    content <b>{{ session.profile.fingerprint.content_hash[:10] }}</b> ·
+    profile v{{ session.profile.fingerprint.profile_version }}
+</p>
+
+<details class="evidence">
+    <summary>Column profiles</summary>
+    <table class="data-table">
+        <thead><tr><th>column</th><th>role</th><th>dtype</th><th>missing</th><th>unique</th><th>top values</th></tr></thead>
+        <tbody>
+        {% for c in session.profile.columns %}
+            <tr>
+                <td>{{ c.name }}</td><td>{{ c.role.value }}</td><td>{{ c.dtype }}</td>
+                <td>{{ '%.1f'|format(c.missing_pct * 100) }}%</td>
+                <td>{{ '{:,}'.format(c.unique_count) }}</td>
+                <td>{% for v in c.top_values[:2] %}{{ v.value }} ({{ v.count }}){% if not loop.last %}, {% endif %}{% endfor %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</details>
+<hr>

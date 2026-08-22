@@ -1,180 +1,113 @@
-import os
+from __future__ import annotations
+
+import io
+import shutil
+import time
+import uuid
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
-import io
-from config import ENCODINGS_TO_TRY, DELIMITERS_TO_TRY, MAX_ROWS, MAX_PLOT_FILES
+
+from insight.domain.dataset import DatasetProfile
+from insight.domain.visualization import AnalysisResponse
+from insight.profiling.profiler import profile_dataframe
+from insight.settings import get_settings
+
+ENCODINGS = ["utf-8", "utf-8-sig", "latin1", "cp1252"]
+DELIMITERS = [",", ";", "\t"]
 
 
-def initialize_session_state():
-    """Initialize session state variables."""
-    if 'history' not in st.session_state:
-        st.session_state.history = []
-    if 'quick_query' not in st.session_state:
-        st.session_state.quick_query = None
-    if 'agent_initialized' not in st.session_state:
-        st.session_state.agent_initialized = False
-    if 'agent' not in st.session_state:
-        st.session_state.agent = None
-    if 'plot_counter' not in st.session_state:
-        st.session_state.plot_counter = 0
-
-
-def get_data_summary(df):
-    """Get comprehensive data summary statistics."""
-    summary = {
-        "rows": len(df),
-        "columns": len(df.columns),
-        "memory_usage": df.memory_usage(deep=True).sum(),
-        "numeric_columns": len(df.select_dtypes(include=['number']).columns),
-        "categorical_columns": len(df.select_dtypes(include=['object']).columns),
-        "missing_values": df.isnull().sum().sum(),
-        "duplicate_rows": df.duplicated().sum()
-    }
-    return summary
-
-
-def clear_conversation():
-    """Clear conversation history and reset agent state."""
-    st.session_state.history = []
-    st.session_state.agent_initialized = False
-    st.session_state.agent = None
-    st.session_state.plot_counter = 0
-    
-    # Clean up any existing plot files
-    for i in range(MAX_PLOT_FILES):
-        plot_path = f"temp_plot_{i}.png"
-        if os.path.exists(plot_path):
-            os.remove(plot_path)
-    
-    st.rerun()
-
-
-def validate_csv(uploaded_file):
-    """Validate uploaded CSV file."""
-    try:
-        raw_data = uploaded_file.read()
-    except Exception as e:
-        return False, f"Failed to read uploaded file content: {str(e)}"
-    
-    df = None
-    last_exception = None
-    
-    for encoding in ENCODINGS_TO_TRY:
-        for delimiter in DELIMITERS_TO_TRY:
+@st.cache_data(show_spinner=False)
+def parse_csv(content: bytes) -> tuple[pd.DataFrame | None, str | None]:
+    settings = get_settings()
+    last_error = "empty file"
+    for encoding in ENCODINGS:
+        for delimiter in DELIMITERS:
             try:
-                df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, delimiter=delimiter)
+                df = pd.read_csv(
+                    io.BytesIO(content), encoding=encoding, delimiter=delimiter
+                )
                 if not df.empty and len(df.columns) > 0:
-                    if len(df) > MAX_ROWS:
-                        return False, f"File is too large (max {MAX_ROWS:,} rows)"
-                    return True, f"File validation successful (encoding: {encoding}, delimiter: '{delimiter}')"
-                else:
-                    last_exception = f"Loaded with encoding='{encoding}' and delimiter='{delimiter}', but DataFrame is empty or has no columns."
-            except Exception as e:
-                last_exception = f"Failed to load with encoding='{encoding}' and delimiter='{delimiter}': {e}"
-    
-    if df is None or df.empty or len(df.columns) == 0:
-        return False, f"Could not parse CSV file. Last attempt failed with: {last_exception}"
-    
-    return False, "An unexpected error occurred during CSV validation."
+                    if len(df) > settings.max_upload_rows:
+                        return (
+                            None,
+                            f"File has {len(df):,} rows (max {settings.max_upload_rows:,})",
+                        )
+                    return df, None
+                last_error = f"parsed with {encoding}/{delimiter!r} but empty"
+            except Exception as exc:
+                last_error = f"{encoding}/{delimiter!r}: {exc}"
+    return None, f"Could not parse CSV. Last attempt — {last_error}"
 
 
-def validate_api_key(api_key):
-    """Validate Groq API key format."""
-    if not api_key:
-        return False, "API key is required"
-    if not api_key.startswith('gsk_'):
-        return False, "Invalid API key format (should start with 'gsk_')"
-    return True, "API key format is valid"
+@st.cache_data(show_spinner=False)
+def compute_profile(content: bytes, name: str) -> DatasetProfile | None:
+    import hashlib
+
+    df, error = parse_csv(content)
+    if df is None or error:
+        return None
+    content_hash = hashlib.sha256(content).hexdigest()[:16]
+    return profile_dataframe(df, name, content_hash)
 
 
-def load_dataframe_from_session():
-    """Load DataFrame from session state with error handling."""
-    if 'uploaded_file_content' not in st.session_state or st.session_state.uploaded_file_content is None:
-        return None, "No file uploaded"
-    
+def new_session_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def discover_models_cached(_force_token: int = 0) -> list[dict]:
+    import asyncio
+
+    from insight.llm.registry import discover_models as _discover
+
     try:
-        df = None
-        last_load_error = None
-        
-        for encoding in ENCODINGS_TO_TRY:
-            for delimiter in DELIMITERS_TO_TRY:
-                try:
-                    df = pd.read_csv(
-                        io.BytesIO(st.session_state.uploaded_file_content), 
-                        encoding=encoding, 
-                        delimiter=delimiter
-                    )
-                    if not df.empty and len(df.columns) > 0:
-                        return df, None
-                    else:
-                        last_load_error = f"Loaded with encoding='{encoding}' and delimiter='{delimiter}', but DataFrame is empty or has no columns."
-                except Exception as e:
-                    last_load_error = f"Failed to load with encoding='{encoding}' and delimiter='{delimiter}': {e}"
-        
-        if df is None or df.empty or len(df.columns) == 0:
-            return None, f"Could not load DataFrame after trying multiple encodings and delimiters. Last error: {last_load_error}"
-        
-        return df, None
-        
-    except Exception as e:
-        return None, f"Failed to process the CSV file: {str(e)}"
+        infos = asyncio.run(_discover())
+    except Exception:
+        infos = []
+    return [i.model_dump() for i in infos]
 
 
-def cleanup_plot_files():
-    """Clean up temporary plot files."""
-    for i in range(MAX_PLOT_FILES):
-        plot_path = f"temp_plot_{i}.png"
-        if os.path.exists(plot_path):
-            try:
-                os.remove(plot_path)
-            except Exception:
-                pass  # Ignore cleanup errors
+def ensure_discovery_registered(force: bool = False) -> int:
+    from insight.llm import registry as llm_registry
+
+    if force:
+        discover_models_cached.clear()
+
+    payloads = discover_models_cached(int(time.time()) if force else 0)
+    registered = 0
+    for payload in payloads:
+        model_id = payload["model_id"]
+        if model_id not in llm_registry.DISCOVERED:
+            llm_registry.DISCOVERED[model_id] = (
+                llm_registry.ModelInfo(**payload)
+            )
+            registered += 1
+    return registered
 
 
-def generate_export_docx(history, dataset_name="Dataset", date_str=""):
-    """Generate a DOCX file from the conversation history."""
-    try:
-        from docx import Document
-        from docx.shared import Inches, Pt
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-    except ImportError:
-        raise ImportError("Please install python-docx to use export features.")
-        
-    doc = Document()
-    
-    title = f"Insight Analysis Report — {dataset_name}"
-    if date_str:
-        title += f" — {date_str}"
-        
-    doc.add_heading(title, 0)
-    
-    if not history:
-        doc.add_paragraph("No conversation history available.")
-    
-    figure_count = 1
-    
-    for msg in history:
-        role = "You" if msg["role"] == "user" else "Insight"
-        doc.add_heading(role, level=2)
-        doc.add_paragraph(msg["content"])
-        
-        if "plot_paths" in msg:
-            for plot_path in msg["plot_paths"]:
-                if os.path.exists(plot_path):
-                    try:
-                        doc.add_picture(plot_path, width=Inches(6.0))
-                        
-                        caption_para = doc.add_paragraph(f"Figure {figure_count}: Analysis Visualization")
-                        caption_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        if caption_para.runs:
-                            caption_run = caption_para.runs[0]
-                            caption_run.italic = True
-                            caption_run.font.size = Pt(9)
-                            
-                        figure_count += 1
-                    except Exception:
-                        doc.add_paragraph(f"[Image failed to load: {plot_path}]")
-                        
-    bio = io.BytesIO()
-    doc.save(bio)
-    return bio.getvalue()
+def session_artifacts_dir(session_id: str) -> Path:
+    root = get_settings().artifacts_dir / session_id
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def clear_session(session_id: str | None) -> None:
+    st.session_state.turns = []
+    st.session_state.quick_query = None
+    st.session_state.analysis_state = None
+    st.session_state.session_id = new_session_id()
+    if session_id:
+        root = get_settings().artifacts_dir / session_id
+        if root.exists():
+            shutil.rmtree(root, ignore_errors=True)
+
+
+def build_report_docx(
+    turns: list[dict], dataset_name: str, date_str: str,
+    findings: list[dict] | None = None,
+) -> bytes:
+    from insight.reports.docx import build_report_docx as _build
+
+    return _build(turns, dataset_name, date_str, findings=findings)

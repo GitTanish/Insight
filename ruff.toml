@@ -1,0 +1,7 @@
+line-length = 120
+target-version = "py311"
+extend-exclude = [".venv", ".artifacts"]
+
+[lint]
+select = ["E9", "F"]
+ignore = ["F401"]
