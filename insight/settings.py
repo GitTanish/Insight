@@ -45,6 +45,13 @@ class Settings(BaseModel):
     planner_max_tokens: int = 3000
     explainer_max_tokens: int = 1500
     max_repair_attempts: int = 1
+    # When on, every question stops at a reviewable plan before execution.
+    plan_approval: bool = Field(
+        default_factory=lambda: os.getenv("INSIGHT_PLAN_APPROVAL", "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
     require_user_key: bool = Field(
         default_factory=lambda: os.getenv("INSIGHT_REQUIRE_USER_KEY", "")
         .strip()

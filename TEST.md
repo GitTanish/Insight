@@ -346,7 +346,7 @@ pytest tests/test_operations.py tests/test_sql_engine.py tests/test_verification
 
 ### Core Regression Commands
 ```bash
-# Full offline test suite (85+ core unit & integration tests, tracing & query cache forced off)
+# Full offline test suite (214 unit & integration tests, tracing & query cache forced off)
 pytest -q
 
 # Run local invariants & robustness tests (if present locally)
@@ -363,5 +363,5 @@ python evaluation/run_eval.py --model groq/openai/gpt-oss-120b --limit 5
 4. **Deferred Features (Do Not Implement Unprompted)**: Python code-interpreter sandboxes (omitted by design; DuckDB covers analytics safely), multi-user authentication, and native PDF exports.
 
 ### Documentation Discrepancies
-* **Test Counts**: Early documentation mentions "85 tests", while the complete suite with statistical depth and DuckDB features contains over 120+ offline tests.
+* **Test Counts**: Resolved. `README.md`, `HOW_TO_RUN.md`, `HANDOVER.md` and this file all state **214 passing, 1 skipped**, matching `pytest -q`.
 * **Streamlit vs. WebApp**: `README.md` initially presented the Streamlit UI as primary. The primary production interface is now the FastAPI web application in `webapp/` (Uvicorn port 8000), with Streamlit maintained as a secondary interface.

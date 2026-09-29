@@ -60,6 +60,7 @@ class StubChain:
         self.last_used = None
         self.tokens_in = 0
         self.tokens_out = 0
+        self.cached_tokens_in = 0
         self.llm_calls = 0
         self.llm_latency_ms = 0
 
@@ -73,6 +74,16 @@ class StubChain:
         self.llm_calls += 1
         self.llm_latency_ms += response.latency_ms
         return response
+
+    async def stream(self, request):
+        """Mimics the real chain: text arrives in multiple chunks."""
+        response = await self.generate(request)
+        text = response.content or ""
+        if not text:
+            return
+        midpoint = max(1, len(text) // 2)
+        yield text[:midpoint]
+        yield text[midpoint:]
 
 
 @pytest.fixture

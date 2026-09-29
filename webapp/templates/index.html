@@ -112,6 +112,11 @@
         {% endif %}
 
         {% if session.findings %}
+            {% if session.findings_status == "polishing" %}
+                <p class="polish-note mono-label" data-findings-status="polishing">
+                    Refining findings with AI&hellip;
+                </p>
+            {% endif %}
             {% include "partials/_briefing.html" %}
         {% endif %}
 

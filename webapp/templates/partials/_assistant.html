@@ -20,9 +20,16 @@
         {% endif %}
         {% if response.meta.get('planning_ms') is not none %}
             <span class="chip"><span class="chip-key">breakdown</span>
-                plan {{ '{:,}'.format(response.meta.get('planning_ms', 0)) }} ·
-                exec {{ '{:,}'.format(response.meta.get('execution_ms', 0)) }} ·
-                explain {{ '{:,}'.format(response.meta.get('explaining_ms', 0)) }} ms</span>
+                plan {{ '{:,}'.format(response.meta.get('planning_ms', 0)) }}
+                {%- if response.meta.get('repair_ms') %} · repair {{ '{:,}'.format(response.meta['repair_ms']) }}{% endif %}
+                · exec {{ '{:,}'.format(response.meta.get('execution_ms', 0)) }}
+                · charts {{ '{:,}'.format(response.meta.get('charts_ms', 0)) }}
+                · explain {{ '{:,}'.format(response.meta.get('explaining_ms', 0)) }}
+                {%- if response.meta.get('grounding_retry_ms') %} · verify {{ '{:,}'.format(response.meta['grounding_retry_ms']) }}{% endif %}
+                ms</span>
+        {% endif %}
+        {% if response.meta.get('cache_hit') %}
+            <span class="chip chip-cache"><span class="chip-key">cached</span> instant replay</span>
         {% endif %}
         {% if response.meta.get('tokens_out') %}
             <span class="chip"><span class="chip-key">tokens</span> {{ '{:,}'.format(response.meta['tokens_in']) }} → {{ '{:,}'.format(response.meta['tokens_out']) }}</span>

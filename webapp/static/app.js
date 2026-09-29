@@ -87,6 +87,13 @@
             status.textContent = "";
         }
 
+        function flash(message) {
+            if (!status) return;
+            status.classList.remove("hidden");
+            status.classList.add("error");
+            status.textContent = message;
+        }
+
         function renderStages(activeKey) {
             if (!status) return;
             const items = STAGES.map(function (s) {
@@ -160,6 +167,155 @@
             chat.appendChild(wrap);
         }
 
+        let liveBubble = null;
+        let liveText = "";
+        let planPanel = null;
+
+        function removePlanPanel() {
+            if (planPanel && planPanel.parentNode) {
+                planPanel.parentNode.removeChild(planPanel);
+            }
+            planPanel = null;
+        }
+
+        function showPlanReview(plan, question) {
+            if (!chat) return;
+            removePlanPanel();
+
+            const wrap = document.createElement("div");
+            wrap.className = "turn assistant";
+
+            const bubble = document.createElement("div");
+            bubble.className = "bubble assistant-bubble plan-review";
+
+            const head = document.createElement("div");
+            head.className = "plan-head";
+            head.textContent = "Review the plan before it runs";
+            bubble.appendChild(head);
+
+            if (question) {
+                const q = document.createElement("p");
+                q.className = "plan-question";
+                q.textContent = question;
+                bubble.appendChild(q);
+            }
+
+            const editor = document.createElement("textarea");
+            editor.className = "plan-editor";
+            editor.rows = Math.min(18, (plan.steps || []).length * 3 + 6);
+            editor.spellcheck = false;
+            editor.setAttribute("aria-label", "Analysis plan JSON");
+            editor.value = JSON.stringify(plan, null, 2);
+            bubble.appendChild(editor);
+
+            const summary = document.createElement("div");
+            summary.className = "plan-steps";
+            (plan.steps || []).forEach(function (step) {
+                const chip = document.createElement("span");
+                chip.className = "chip plan-step";
+                chip.textContent = (step.step_id != null ? step.step_id + ": " : "") + step.operation;
+                summary.appendChild(chip);
+            });
+            if (plan.objective) {
+                const obj = document.createElement("p");
+                obj.className = "plan-objective";
+                obj.textContent = plan.objective;
+                bubble.appendChild(obj);
+            }
+            bubble.appendChild(summary);
+
+            const actions = document.createElement("div");
+            actions.className = "plan-actions";
+
+            const run = document.createElement("button");
+            run.className = "btn primary";
+            run.textContent = "Approve & run";
+            run.addEventListener("click", async function () {
+                let parsed;
+                try {
+                    parsed = JSON.parse(editor.value);
+                } catch (err) {
+                    flash("That plan is not valid JSON: " + err.message);
+                    return;
+                }
+                removePlanPanel();
+                resetStatus();
+                setStage("executing", "Running your approved plan...");
+                startTimer();
+                setBusy(true);
+                try {
+                    await streamQuery(question, JSON.stringify(parsed));
+                    stopTimer();
+                    resetStatus();
+                } catch (err) {
+                    flash(String(err.message || err));
+                    stopTimer();
+                } finally {
+                    setBusy(false);
+                }
+            });
+
+            const edit = document.createElement("button");
+            edit.className = "btn";
+            edit.textContent = "Edit JSON";
+            edit.addEventListener("click", function () {
+                editor.classList.toggle("expanded");
+                run.focus();
+            });
+
+            actions.appendChild(run);
+            actions.appendChild(edit);
+            bubble.appendChild(actions);
+
+            const hint = document.createElement("p");
+            hint.className = "plan-hint";
+            hint.textContent =
+                "Nothing has been executed yet. Edit the JSON if you want different steps, then approve.";
+            bubble.appendChild(hint);
+
+            wrap.appendChild(bubble);
+            chat.appendChild(wrap);
+            planPanel = wrap;
+            window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+        }
+
+        function ensureLiveBubble() {
+            if (liveBubble) return liveBubble;
+            if (!chat) return null;
+            const wrap = document.createElement("div");
+            wrap.className = "turn assistant";
+            const bubble = document.createElement("div");
+            bubble.className = "bubble assistant-bubble answer-md streaming";
+            wrap.appendChild(bubble);
+            chat.appendChild(wrap);
+            liveBubble = wrap;
+            liveText = "";
+            return wrap;
+        }
+
+        function appendDelta(text) {
+            const wrap = ensureLiveBubble();
+            if (!wrap) return;
+            const bubble = wrap.querySelector(".answer-md");
+            liveText += text;
+            bubble.textContent = liveText;
+            if (chat) {
+                const nearBottom =
+                    window.innerHeight + window.scrollY >= document.body.offsetHeight - 220;
+                if (nearBottom) {
+                    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+                }
+            }
+        }
+
+        function clearLiveBubble() {
+            if (liveBubble && liveBubble.parentNode) {
+                liveBubble.parentNode.removeChild(liveBubble);
+            }
+            liveBubble = null;
+            liveText = "";
+        }
+
         function parseSseChunk(chunk) {
             let event = "message";
             const dataLines = [];
@@ -171,11 +327,12 @@
             return { event, data: dataLines.join("\n").trim() };
         }
 
-        async function streamQuery(question) {
+        async function streamQuery(question, approvedPlan) {
             const params = new URLSearchParams();
             params.set("question", question);
             if (modelSelect && modelSelect.value) params.set("model_id", modelSelect.value);
             if (tempRange) params.set("temperature", tempRange.value);
+            if (approvedPlan) params.set("approved_plan", approvedPlan);
 
             controller = new AbortController();
             const res = await fetch("/query", {
@@ -228,7 +385,18 @@
                             : "Validator rejected results");
                     } else if (event === "suggestions") {
                         bindFollowups(payload.followups || []);
+                    } else if (event === "delta") {
+                        appendDelta(payload.text || "");
+                    } else if (event === "plan_review") {
+                        showPlanReview(payload.plan, payload.question || "");
+                        stopTimer();
+                        setBusy(false);
+                    } else if (event === "delta_reset") {
+                        liveText = "";
+                        const bubble = liveBubble && liveBubble.querySelector(".answer-md");
+                        if (bubble) bubble.textContent = "";
                     } else if (event === "result" && payload.html) {
+                        clearLiveBubble();
                         if (chat) chat.insertAdjacentHTML("beforeend", payload.html);
                         window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
                     } else if (event === "end") {

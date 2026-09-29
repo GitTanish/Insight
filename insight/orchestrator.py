@@ -10,6 +10,8 @@ from insight.domain.errors import (
     InsightError,
     PlanValidationError,
 )
+from insight.analytics.operations import validate_plan_columns
+from insight.domain.analysis import AnalysisPlan
 from insight.domain.query import AnalysisRequest
 from insight.domain.visualization import AnalysisResponse, Evidence
 from insight.conversation.state import (
@@ -21,7 +23,12 @@ from insight.conversation.state import (
 from insight.execution.executor import execute_plan
 from insight.llm.base import LLMRequest
 from insight.llm.registry import build_llm_chain
-from insight.observability import attach_metadata, configure_langsmith, trace_span
+from insight.observability import (
+    attach_metadata,
+    configure_langsmith,
+    current_trace_url,
+    trace_span,
+)
 from insight.planning.planner import Planner
 from insight.planning.prompts import build_explainer_messages
 from insight.settings import get_settings
@@ -49,6 +56,7 @@ class _Chain:
         self.last_used: Optional[str] = None
         self.tokens_in: int = 0
         self.tokens_out: int = 0
+        self.cached_tokens_in: int = 0
         self.llm_calls: int = 0
         self.llm_latency_ms: int = 0
 
@@ -84,12 +92,14 @@ class _Chain:
                 self.llm_latency_ms += response.latency_ms
                 self.tokens_in += response.prompt_tokens or 0
                 self.tokens_out += response.completion_tokens or 0
+                self.cached_tokens_in += response.cached_prompt_tokens or 0
                 attach_metadata(
                     llm_provider=provider.name,
                     llm_model=model,
                     llm_latency_ms=response.latency_ms,
                     llm_prompt_tokens=response.prompt_tokens,
                     llm_completion_tokens=response.completion_tokens,
+                    llm_cached_prompt_tokens=response.cached_prompt_tokens,
                     wall_ms=int((time.monotonic() - started) * 1000),
                 )
                 return response
@@ -104,6 +114,51 @@ class _Chain:
             except Exception as exc:
                 errors.append(InsightError(str(exc)))
         raise AllProvidersFailedError(errors)
+
+    async def stream(self, request: LLMRequest) -> AsyncIterator[str]:
+        """Yield answer text as it arrives, failing over between providers.
+
+        Failover only happens while nothing has been emitted yet: once text
+        reaches the user we cannot un-say it, so a mid-stream failure aborts
+        instead of splicing two providers together.
+        """
+        errors: list[Exception] = []
+        emitted = False
+        for provider, model, info in self.entries:
+            updates: dict = {
+                "model": model,
+                "temperature": (
+                    self.temperature
+                    if request.temperature is None
+                    else request.temperature
+                ),
+            }
+            if info.supports_reasoning_effort is False:
+                updates["reasoning_effort"] = None
+            if info.supports_json_mode is False:
+                updates["allow_server_json"] = False
+            effective = request.model_copy(update=updates)
+            try:
+                chunks: list[str] = []
+                async for delta in provider.stream(effective):
+                    if delta:
+                        chunks.append(delta)
+                        emitted = True
+                        yield delta
+                if chunks:
+                    self.last_used = f"{provider.name}/{model}"
+                    self.llm_calls += 1
+                    return
+            except InsightError as exc:
+                errors.append(exc)
+                if emitted:
+                    raise
+            except Exception as exc:
+                errors.append(InsightError(str(exc)))
+                if emitted:
+                    raise
+        if errors:
+            raise AllProvidersFailedError(errors)
 
 
 def _build_chain_for(
@@ -171,6 +226,7 @@ async def analyze_stream(
     history: Optional[list[tuple[str, str]]] = None,
     state: Optional[AnalysisSessionState] = None,
     datasets: Optional[dict] = None,
+    use_cache: bool = True,
 ) -> AsyncIterator[dict]:
     configure_langsmith()
     settings = get_settings()
@@ -180,8 +236,59 @@ async def analyze_stream(
 
         artifacts_dir = _PathDir(artifacts_dir)
 
-    sql_schema_text: Optional[str] = None
     table_datasets = dict(datasets) if datasets else {profile.name: df}
+    cache_key = None
+
+    from insight.observability import (
+        finish_root_run,
+        start_root_run,
+        trace_phase,
+    )
+
+    root_client, root_run = start_root_run(
+        "insight.analyze",
+        {
+            "question": request.question,
+            "dataset_id": profile.fingerprint.dataset_id,
+            "row_count": profile.row_count,
+            "column_count": profile.column_count,
+            "streaming": True,
+            "model": request.model_id,
+        },
+    )
+
+    # A user-edited plan is request-specific and must not be served from, or
+    # written to, the shared cache.
+    cacheable = (
+        use_cache
+        and artifacts_dir is not None
+        and settings.query_cache_enabled
+        and not request.plan_only
+        and not settings.plan_approval
+        and request.approved_plan is None
+    )
+
+    if cacheable:
+        from insight import cache as result_cache
+
+        cache_key = result_cache.cache_key_for(profile, request, state)
+        if cache_key:
+            cached = result_cache.load_cached_response(cache_key, artifacts_dir)
+            if cached is not None:
+                cached.meta["cache_hit"] = True
+                cached.meta["total_ms"] = int((time.monotonic() - started) * 1000)
+                yield {"type": "stage", "key": "planning", "label": "Restoring cached answer..."}
+                yield {"type": "state", "state": (state.model_dump(mode="json") if state else {})}
+                yield {"type": "suggestions", "followups": cached.meta.get("followups", [])}
+                yield {"type": "result", "response": cached}
+                finish_root_run(
+                    root_client, root_run,
+                    outputs={"cache_hit": True, "question": request.question,
+                             "total_ms": cached.meta.get("total_ms")},
+                )
+                return
+
+    sql_schema_text: Optional[str] = None
     if settings.sql_enabled:
         from insight.analytics.sql_engine import DuckSession
 
@@ -227,19 +334,34 @@ async def analyze_stream(
     )
 
     repair_attempted = False
+    repair_ms = 0
+    repair_attempts = 0
+    repair_issues: list[str] = []
 
     yield {"type": "stage", "key": "planning", "label": "Planning investigation..."}
 
     try:
         t_plan = time.monotonic()
-        plan = await planner.plan(
-            request.question,
-            profile,
-            history=history,
-            session_context=session_context,
-            sql_schema=sql_schema_text,
-        )
-        planning_ms = int((time.monotonic() - t_plan) * 1000)
+        if request.approved_plan is not None:
+            # The user reviewed (and possibly edited) this plan. Re-validate it
+            # against the current schema instead of trusting it blindly.
+            with trace_phase("planning.plan.approved", question=request.question):
+                plan, approved_issues = validate_plan_columns(
+                    AnalysisPlan.model_validate(request.approved_plan), profile
+                )
+            if approved_issues:
+                raise PlanValidationError(approved_issues)
+            planning_ms = int((time.monotonic() - t_plan) * 1000)
+        else:
+            with trace_phase("planning.plan.stream", question=request.question):
+                plan = await planner.plan(
+                    request.question,
+                    profile,
+                    history=history,
+                    session_context=session_context,
+                    sql_schema=sql_schema_text,
+                )
+            planning_ms = int((time.monotonic() - t_plan) * 1000)
     except PlanValidationError as exc:
         yield {
             "type": "stage",
@@ -247,6 +369,10 @@ async def analyze_stream(
             "label": "Planning failed",
             "level": "error",
         }
+        finish_root_run(
+            root_client, root_run,
+            error=f"plan_validation_failed: {'; '.join(exc.issues[:4])[:200]}",
+        )
         yield {
             "type": "result",
             "response": AnalysisResponse(
@@ -269,13 +395,34 @@ async def analyze_stream(
         "steps": [{"id": s.step_id, "operation": s.operation} for s in plan.steps],
     }
 
+    if request.plan_only or settings.plan_approval:
+        # Human-in-the-loop: hand the plan to the user for review/edit and stop
+        # before any data is executed.
+        plan_payload = plan.model_dump(mode="json")
+        yield {
+            "type": "plan_review",
+            "plan": plan_payload,
+            "question": request.question,
+        }
+        finish_root_run(
+            root_client, root_run,
+            outputs={"plan_awaiting_approval": True, "step_count": len(plan.steps)},
+        )
+        return
+
     yield {
         "type": "stage",
         "key": "executing",
         "label": f"Executing {len(plan.steps)} deterministic step(s)...",
     }
-    execution = await _execute_with_sql(plan)
-    validation = validate_execution(plan, execution, df=df, profile=profile)
+    with trace_phase(
+        "execution.execute_plan",
+        steps=[s.operation for s in plan.steps],
+        step_count=len(plan.steps),
+    ):
+        execution = await _execute_with_sql(plan)
+    with trace_phase("validation.validate_execution"):
+        validation = validate_execution(plan, execution, df=df, profile=profile)
     yield {
         "type": "validation",
         "valid": validation.valid,
@@ -284,18 +431,20 @@ async def analyze_stream(
 
     if not validation.valid and settings.max_repair_attempts > 0:
         repair_attempted = True
+        repair_issues: list[str] = list(validation.error_messages())[:8]
         yield {
             "type": "stage",
             "key": "repairing",
             "label": "Validator rejected results â€” repairing plan once...",
             "level": "warn",
         }
-        repair_issues = "; ".join(validation.error_messages()[:8])
+        repair_summary = "; ".join(validation.error_messages()[:8])
         repair_question = (
-            f"{request.question}\n\n(A previous attempt failed: {repair_issues}. "
+            f"{request.question}\n\n(A previous attempt failed: {repair_summary}. "
             "Produce a corrected plan avoiding these problems.)"
         )
         try:
+            t_repair = time.monotonic()
             repaired_plan = await planner.plan(
                 repair_question,
                 profile,
@@ -303,6 +452,7 @@ async def analyze_stream(
                 session_context=session_context,
                 sql_schema=sql_schema_text,
             )
+            repair_attempts = 1
             second_execution = await _execute_with_sql(repaired_plan)
             second_validation = validate_execution(
                 repaired_plan, second_execution, df=df, profile=profile
@@ -313,7 +463,9 @@ async def analyze_stream(
                 second_validation,
             )
         except PlanValidationError:
-            pass
+            repair_attempts = 1
+        finally:
+            repair_ms += int((time.monotonic() - t_repair) * 1000)
 
     analysis_state = extract_state_from_plan(plan, base=state)
     if profile.fingerprint.dataset_id:
@@ -343,10 +495,13 @@ async def analyze_stream(
     yield {"type": "suggestions", "followups": followups}
 
     yield {"type": "stage", "key": "rendering", "label": "Rendering editorial charts..."}
+    t_charts = time.monotonic()
     artifacts_dir.mkdir(parents=True, exist_ok=True)
-    plots, chart_warnings = render_charts(
-        plan.charts, execution.tables_by_step(), artifacts_dir, EDITORIAL_THEME
-    )
+    with trace_phase("visualization.render_charts", charts=len(plan.charts)):
+        plots, chart_warnings = render_charts(
+            plan.charts, execution.tables_by_step(), artifacts_dir, EDITORIAL_THEME
+        )
+    charts_ms = int((time.monotonic() - t_charts) * 1000)
     figures_text = "\n".join(
         f"{i}. {plot.chart_type} — \"{plot.title}\""
         for i, plot in enumerate(plots, start=1)
@@ -372,14 +527,26 @@ async def analyze_stream(
     )
 
     t_explain = time.monotonic()
-    try:
-        explanation_response = await chain.generate(explainer_request)
-        answer = explanation_response.content.strip()
-    except InsightError:
-        answer = _fallback_answer(validation, execution)
+    answer_chunks: list[str] = []
+    first_token_ms: Optional[int] = None
+    with trace_phase("explainer.compose"):
+        try:
+            async for delta in chain.stream(explainer_request):
+                if not delta:
+                    continue
+                if first_token_ms is None:
+                    first_token_ms = int((time.monotonic() - t_explain) * 1000)
+                answer_chunks.append(delta)
+                yield {"type": "delta", "text": delta}
+            answer = "".join(answer_chunks).strip()
+            if not answer:
+                answer = _fallback_answer(validation, execution)
+        except InsightError:
+            answer = _fallback_answer(validation, execution)
     explaining_ms = int((time.monotonic() - t_explain) * 1000)
 
     unverified_figures: list[str] = []
+    grounding_retry_ms = 0
     if settings.answer_grounded_check and answer and answer != _fallback_answer(validation, execution):
         from insight.validation.grounding import (
             build_grounding_retry_message,
@@ -419,14 +586,22 @@ async def analyze_stream(
                 "content": build_grounding_retry_message(unverified_figures),
             })
             try:
-                retry_response = await chain.generate(LLMRequest(
+                t_ground = time.monotonic()
+                yield {"type": "delta_reset"}
+                rewritten: list[str] = []
+                async for delta in chain.stream(LLMRequest(
                     messages=retry_messages,
                     model=chain.primary_model,
                     temperature=None,
                     max_tokens=settings.explainer_max_tokens,
                     reasoning_effort=chain.reasoning_effort,
-                ))
-                retried_answer = retry_response.content.strip()
+                )):
+                    if delta:
+                        rewritten.append(delta)
+                        yield {"type": "delta", "text": delta}
+                retried_answer = "".join(rewritten).strip()
+                if not retried_answer:
+                    raise InsightError("empty rewrite")
                 still_bad = find_ungrounded_numbers(
                     retried_answer,
                     execution.all_calculations(),
@@ -437,6 +612,8 @@ async def analyze_stream(
                 unverified_figures = still_bad
             except InsightError:
                 pass
+            finally:
+                grounding_retry_ms = int((time.monotonic() - t_ground) * 1000)
 
     evidence: list[Evidence] = [
         Evidence(kind="calculation", label=c.label, value=_cell(c.value), detail=c.detail)
@@ -458,6 +635,15 @@ async def analyze_stream(
         "objective": plan.objective,
         "repair_attempted": repair_attempted,
         "planning_ms": planning_ms,
+        "repair_ms": repair_ms,
+        "repair_attempts": repair_attempts,
+        "repair_issues": repair_issues[:8],
+        "charts_ms": charts_ms,
+        "cached_prompt_tokens": chain.cached_tokens_in,
+        "prompt_tokens": chain.tokens_in,
+        "completion_tokens": chain.tokens_out,
+        "grounding_retry_ms": grounding_retry_ms,
+        "first_token_ms": first_token_ms,
         "explaining_ms": explaining_ms,
         "execution_ms": execution.duration_ms,
         "total_ms": int((time.monotonic() - started) * 1000),
@@ -488,9 +674,7 @@ async def analyze_stream(
         ],
     }
 
-    yield {
-        "type": "result",
-        "response": AnalysisResponse(
+    final_response = AnalysisResponse(
         question=request.question,
         answer=answer,
         evidence=evidence,
@@ -498,7 +682,48 @@ async def analyze_stream(
         plots=plots,
         validation=validation,
         meta=meta,
-        ),
+    )
+
+    if cacheable and final_response.error is None and validation.valid:
+        from insight import cache as result_cache
+
+        result_cache.store_cached_response(cache_key or result_cache.cache_key_for(
+            profile, request, state
+        ), final_response)
+
+    trace_url = current_trace_url()
+    if trace_url:
+        final_response.meta.setdefault("trace_url", trace_url)
+    finish_root_run(
+        root_client,
+        root_run,
+        outputs={
+            "answer_chars": len(final_response.answer),
+            "model": final_response.meta.get("model"),
+            "validation_valid": validation.valid,
+            "cache_hit": bool(final_response.meta.get("cache_hit")),
+        "repair_attempts": repair_attempts,
+        "repair_issues": repair_issues[:8],
+            "unverified_figures": unverified_figures,
+            "followups": followups,
+            "latency_ms": {
+                "planning": planning_ms,
+                "repair": repair_ms,
+                "execution": execution.duration_ms,
+                "charts": charts_ms,
+                "explaining": explaining_ms,
+                "grounding_retry": grounding_retry_ms,
+                "total": int((time.monotonic() - started) * 1000),
+            },
+            "tokens_in": final_response.meta.get("tokens_in"),
+            "tokens_out": final_response.meta.get("tokens_out"),
+            "plots": len(plots),
+        },
+    )
+
+    yield {
+        "type": "result",
+        "response": final_response,
     }
 
 
@@ -520,8 +745,21 @@ async def analyze(
 
     configure_langsmith()
 
+    if request.plan_only or get_settings().plan_approval:
+        raise InsightError(
+            "plan review requires the streaming endpoint; "
+            "call analyze_stream() and read the 'plan_review' event"
+        )
+    if request.approved_plan is not None and request.plan_only:
+        raise InsightError("plan_only and approved_plan are mutually exclusive")
+
     cache_key = None
-    if use_cache and artifacts_dir is not None:
+    cacheable = (
+        use_cache
+        and artifacts_dir is not None
+        and request.approved_plan is None
+    )
+    if cacheable:
         cache_key = result_cache.cache_key_for(profile, request, state)
         if cache_key:
             cached = result_cache.load_cached_response(cache_key, _Path(artifacts_dir))
@@ -531,78 +769,30 @@ async def analyze(
                     cached.meta.setdefault("trace_url", trace_url)
                 cached.meta["cache_hit"] = True
                 return cached
-
-    client = None
-    root_run = None
-    if is_tracing_enabled():
-        try:
-            from langsmith import Client
-
-            client = Client()
-            root_run = client.create_run(
-                name="insight.analyze",
-                run_type="chain",
-                inputs={
-                    "question": request.question,
-                    "dataset_id": profile.fingerprint.dataset_id,
-                    "row_count": profile.row_count,
-                    "column_count": profile.column_count,
-                },
-                start_time=_dt.datetime.now(_dt.timezone.utc),
-            )
-        except Exception:
-            client = None
-            root_run = None
-
     response: AnalysisResponse | None = None
     pipeline_error: Exception | None = None
     try:
         async for event in analyze_stream(
-            df, profile, request, artifacts_dir, history, state, datasets
+            df, profile, request, artifacts_dir, history, state, datasets, use_cache
         ):
             if event["type"] == "result":
                 response = event["response"]
     except Exception as exc:
         pipeline_error = exc
-    finally:
-        if client is not None and root_run is not None:
-            try:
-                outputs = None
-                if response is not None:
-                    outputs = {
-                        "answer_chars": len(response.answer),
-                        "model": response.meta.get("model"),
-                        "validation_valid": (
-                            response.validation.valid if response.validation else None
-                        ),
-                        "steps": [
-                            {"id": s["step_id"], "op": s["operation"], "ok": s["success"]}
-                            for s in response.meta.get("steps", [])
-                        ],
-                        "total_ms": response.meta.get("total_ms"),
-                        "tokens_in": response.meta.get("tokens_in"),
-                        "tokens_out": response.meta.get("tokens_out"),
-                        "plots": len(response.plots),
-                    }
-                client.update_run(
-                    root_run.id,
-                    outputs={"output": outputs} if outputs else None,
-                    error=(
-                        f"{type(pipeline_error).__name__}: {pipeline_error}"
-                        if pipeline_error
-                        else None
-                    ),
-                    end_time=_dt.datetime.now(_dt.timezone.utc),
-                )
-            except Exception:
-                pass
 
     if pipeline_error is not None:
         raise pipeline_error
     if response is None:
         raise InsightError("analysis pipeline produced no result")
 
-    if cache_key and response.error is None and response.validation and response.validation.valid:
+
+    if (
+        cacheable
+        and cache_key
+        and response.error is None
+        and response.validation
+        and response.validation.valid
+    ):
         result_cache.store_cached_response(cache_key, response)
         response.meta["cache_hit"] = False
 

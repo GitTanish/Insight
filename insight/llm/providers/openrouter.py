@@ -6,6 +6,7 @@ from insight.llm.providers.openai_compat import OpenAICompatibleProvider
 class OpenRouterProvider(OpenAICompatibleProvider):
     name: ClassVar[str] = "openrouter"
     base_url: ClassVar[str] = "https://openrouter.ai/api/v1"
+    supports_prompt_cache_key: ClassVar[bool] = True
 
     _PREFERRED_VENDOR_PREFIXES: ClassVar[tuple[str, ...]] = (
         "openai/",

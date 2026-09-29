@@ -42,6 +42,7 @@ class AlternateStubChain:
     last_used = None
     tokens_in = 0
     tokens_out = 0
+    cached_tokens_in = 0
     llm_calls = 0
     llm_latency_ms = 0
 
@@ -59,6 +60,15 @@ class AlternateStubChain:
         content = PLAN if self.calls % 2 == 1 else EXPLAIN
         self.last_used = "fake/fake-1"
         return LLMResponse(content=content, provider="fake", model="fake-1", latency_ms=1)
+
+    async def stream(self, request):
+        response = await self.generate(request)
+        text = response.content or ""
+        if not text:
+            return
+        midpoint = max(1, len(text) // 2)
+        yield text[:midpoint]
+        yield text[midpoint:]
 
 
 @pytest.fixture

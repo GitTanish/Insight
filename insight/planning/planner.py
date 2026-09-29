@@ -60,6 +60,7 @@ class Planner:
                 json_mode=True,
                 max_tokens=self._max_tokens,
                 reasoning_effort=self._reasoning_effort,
+                cache_prompt=True,
             )
             response = await self._generate(request)
             raw_content = response.content

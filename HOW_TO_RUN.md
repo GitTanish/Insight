@@ -72,9 +72,18 @@ streamlit run main.py
 1. **Upload a CSV or Excel file** in the left rail (multi-sheet workbooks register one table per sheet)
 2. The **Zero-Prompt Briefing** appears immediately after upload — top findings with **Investigate** buttons, no question needed
 3. Pick a model — defaults to Groq `gpt-oss-120b`
-4. Ask questions; watch live pipeline stages (*Planning → Executing → Validating → Explaining*) stream in as they happen
+4. Ask questions; watch live pipeline stages (*Planning → Executing → Validating → Explaining*) stream in as they happen, and the answer itself type in token by token
 5. Open **View calculation** / **View plan** under any answer to inspect it
 6. **Export DOCX** includes the briefing findings plus every answer, chart, and caveat
+
+### Optional: review every plan before it runs
+
+Set `INSIGHT_PLAN_APPROVAL=on` in `.env` and restart. Each question then stops at
+an editable plan card — the exact operations that *would* run — with an
+**Approve & run** button. Edit the JSON first if you want different steps.
+
+Approved plans are re-checked against your actual columns, so a typo'd column
+name is rejected rather than executed.
 
 ### JSON API (headless)
 
@@ -83,6 +92,13 @@ streamlit run main.py
 curl -X POST http://localhost:8000/api/query \
      -H "Content-Type: application/json" \
      -d '{"question": "Which region has the highest revenue?"}'
+
+# human-in-the-loop: get a plan back instead of an answer, then execute it
+curl -X POST http://localhost:8000/api/query \
+     -H "Content-Type: application/json" \
+     -d '{"question": "Which region has the highest revenue?", "plan_only": true}'
+# → {"plan": {...}}   then resubmit with the (optionally edited) plan:
+#   -d '{"question": "...", "approved_plan": { ... }}'
 ```
 
 ## 5. Run the tests (no API key required)
@@ -91,7 +107,7 @@ curl -X POST http://localhost:8000/api/query \
 pytest
 ```
 
-172 offline tests via scripted fake LLMs. A separate live eval suite runs only
+214 offline tests via scripted fake LLMs. A separate live eval suite runs only
 with `INSIGHT_RUN_EVAL=1 pytest -m eval` (needs a provider key):
 
 ```bash

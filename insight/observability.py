@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import functools
 import os
-from typing import Any, Callable
+from typing import Any, Callable, Iterator, Optional
 
 from insight.settings import get_settings
 
@@ -107,3 +108,64 @@ def current_trace_url() -> str | None:
     except Exception:
         pass
     return None
+
+
+def start_root_run(name: str, inputs: dict) -> tuple[Any, Any]:
+    """Create a root run so streaming and sync calls both appear in the tree."""
+    if not is_tracing_enabled():
+        return None, None
+    try:
+        from langsmith import Client
+
+        client = Client()
+        run = client.create_run(
+            name=name,
+            run_type="chain",
+            inputs={k: v for k, v in inputs.items() if v is not None},
+            start_time=_utcnow(),
+        )
+        return client, run
+    except Exception:
+        return None, None
+
+
+def finish_root_run(
+    client: Any,
+    run: Any,
+    outputs: Optional[dict] = None,
+    error: Optional[str] = None,
+) -> None:
+    if client is None or run is None:
+        return
+    try:
+        client.update_run(
+            run.id,
+            outputs={"output": outputs} if outputs else None,
+            error=error,
+            end_time=_utcnow(),
+        )
+    except Exception:
+        pass
+
+
+@contextlib.contextmanager
+def trace_phase(name: str, run_type: str = "chain", **inputs: Any) -> Iterator[Any]:
+    """Context manager recording a phase (plan/execute/validate/render/explain)."""
+    if not is_tracing_enabled():
+        yield None
+        return
+    try:
+        from langsmith import run_helpers
+    except Exception:
+        yield None
+        return
+    with run_helpers.trace(
+        name=name, run_type=run_type, inputs=inputs or None
+    ) as run_tree:
+        yield run_tree
+
+
+def _utcnow():
+    import datetime as _dt
+
+    return _dt.datetime.now(_dt.timezone.utc)

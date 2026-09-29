@@ -1,4 +1,4 @@
-# Insight â€” Real-World Analysis Log
+# Insight — Real-World Analysis Log
 
 - run: 2026-08-23 14:53
 - dataset: `diamonds.csv` (53,940 x 10, GIA-derived, unmodified)
@@ -22,11 +22,11 @@
 
 ### Q1. Which cut has the highest average price, and how big is the gap versus the cheapest-cut average?
 
-> **Premium cut has the highest average price at 4584.257704, while Ideal cut has the lowest average at 3457.54197 â€” Premium's average sits well above Ideal's.**
+> **Premium cut has the highest average price at 4584.257704, while Ideal cut has the lowest average at 3457.54197 — Premium's average sits well above Ideal's.**
 > 
 > Supporting detail from the grouped results (also shown in the bar chart "Average Price by Cut"):
 > 
-> - **Premium:** avg_price **4584.257704** â€” highest
+> - **Premium:** avg_price **4584.257704** — highest
 > - **Fair:** 4358.757764
 > - **Very Good:** 3981.759891
 > - **Good:** 3928.864452
@@ -39,30 +39,30 @@
 > 
 > Key details from the histogram ("Distribution of price"):
 > 
-> - **Lowest bin dominates:** The [326, 942.6) range holds 13,308 diamonds â€” by far the largest group.
+> - **Lowest bin dominates:** The [326, 942.6) range holds 13,308 diamonds — by far the largest group.
 > - 
 
 
 ### Q3. Are there outliers in the price column? How many rows are flagged?
 
-> **Yes â€” the price column contains outliers under the standard IQR rule, with 3,540 rows flagged.**
+> **Yes — the price column contains outliers under the standard IQR rule, with 3,540 rows flagged.**
 > 
 > Supporting detail:
 > - The IQR is **4,374**, giving an acceptable range of **[-5,611, 1.189e+04]**; any row outside this range was flagged.
 > - Flagged rows account for an **outlier_share of 0.0656** of the dataset.
-> - Sample flagged rows skew toward larger stones â€” e.g., a 2.08-carat Ideal/SI2 diamond, 
+> - Sample flagged rows skew toward larger stones — e.g., a 2.08-carat Ideal/SI2 diamond, 
 
 
 ### Q4. Is diamond cut associated with clarity?
 
-> **Yes â€” diamond cut is statistically associated with clarity.** A chi-square test of independence rejects the null hypothesis of no association (statistic = 4391.398067, p = 0.0), which is significant at alpha = 0.05 (p < 0.05).
+> **Yes — diamond cut is statistically associated with clarity.** A chi-square test of independence rejects the null hypothesis of no association (statistic = 4391.398067, p = 0.0), which is significant at alpha = 0.05 (p < 0.05).
 > 
 > Per the analysis interpretation: "Association between 'cut' and 'clarity' is moderate (V=0.142), significant at alpha=0.05 (p=0)." The effect size, measured by Cramer's V
 
 
 ### Q5. Do average prices differ across color grades? Test it statistically.
 
-> **Yes â€” average diamond prices differ significantly across the 7 color grades** (one-way ANOVA p = 0.0, significant at alpha = 0.05).
+> **Yes — average diamond prices differ significantly across the 7 color grades** (one-way ANOVA p = 0.0, significant at alpha = 0.05).
 > 
 > Mean price by grade, highest to lowest:
 > 
@@ -83,23 +83,23 @@
 > 
 > Pairwise Pearson correlations (computed over 53,940 rows per pair):
 > 
-> - **price Ã— carat: 0.9216** â€” the strongest link in the set; heavier diamonds command substantially higher prices.
-> - **price Ã— table: 0.1271** â€” weak positive association.
-> - **price Ã— depth: -0.0106** â€”
+> - **price × carat: 0.9216** — the strongest link in the set; heavier diamonds command substantially higher prices.
+> - **price × table: 0.1271** — weak positive association.
+> - **price × depth: -0.0106** —
 
 
 ### Q7. Regress price on carat, depth and table - how good is the fit and which predictors are significant?
 
-> **The regression fits well and every predictor is significant:** price ~ carat + depth + table yields an RÂ² of **0.853676** (adjusted RÂ² **0.853668**) across **53,940 observations**, with carat, depth, and table all significant at **p < 0.05** (reported p-values of 0.0).
+> **The regression fits well and every predictor is significant:** price ~ carat + depth + table yields an R² of **0.853676** (adjusted R² **0.853668**) across **53,940 observations**, with carat, depth, and table all significant at **p < 0.05** (reported p-values of 0.0).
 > 
 > Per-predictor detail:
 > 
-> - **Carat** is by far the dominant driver â€” coefficient **7858.77051**, standardized beta **0.933752**, 
+> - **Carat** is by far the dominant driver — coefficient **7858.77051**, standardized beta **0.933752**, 
 
 
 ### Q8. Using SQL: for each cut, show the top 2 most expensive stones with a window function, then count how many stones each cut contributed.
 
-> **Every cut contributed exactly 2 stones to its top-2 most-expensive selection â€” 10 stones total across all 5 cuts** (as shown in the bar chart "Stones Contributed to Per-Cut Top-2 by Cut").
+> **Every cut contributed exactly 2 stones to its top-2 most-expensive selection — 10 stones total across all 5 cuts** (as shown in the bar chart "Stones Contributed to Per-Cut Top-2 by Cut").
 > 
 > The window-function ranking surfaced these pairs per cut:
 > 
@@ -109,7 +109,7 @@
 
 ---
 
-# Insight â€” Real-World Analysis Log: clinical
+# Insight — Real-World Analysis Log: clinical
 
 - run: 2026-08-23 15:49
 - dataset: `data/clinical_trails.xlsx (4 sheets: patients 503x15, treatments 280x8, treatment_cut 70x8, adverse_reactions 34x4 - each sheet registered as its own DuckDB table)`
@@ -142,23 +142,23 @@
 
 ### Q2. Which five states have the most enrolled patients?
 
-> **California leads with 36 enrolled patients**, followed by TX (32) and New York (25) â€” these three head the top-five ranking shown in "Top 5 States by Enrolled Patients."
+> **California leads with 36 enrolled patients**, followed by TX (32) and New York (25) — these three head the top-five ranking shown in "Top 5 States by Enrolled Patients."
 > 
 > The full top five as recorded:
 > 
-> 1. **California** â€” 36
-> 2. **TX** â€” 32
-> 3. **New York** â€” 25
-> 4. **CA** â€” 24
-> 5. **NY** â€” 22
+> 1. **California** — 36
+> 2. **TX** — 32
+> 3. **New York** — 25
+> 4. **CA** — 24
+> 5. **NY** — 22
 > 
-> Caveat: state names appear inconsistently in the source data â€” full names ("California", "New York") and 
+> Caveat: state names appear inconsistently in the source data — full names ("California", "New York") and 
 
 - self-repaired
 
 ### Q3. Compare average ending HbA1c between patients treated with Auralin and those treated with Novodra. Note: the drug is Auralin when the auralin dosage column is not '-', otherwise Novodra.
 
-> **Patients treated with Auralin ended with a slightly lower average HbA1c than those on Novodra: 7.418421 vs 7.4725 â€” an absolute difference of -0.054079, or about -0.72% relative to Novodra.**
+> **Patients treated with Auralin ended with a slightly lower average HbA1c than those on Novodra: 7.418421 vs 7.4725 — an absolute difference of -0.054079, or about -0.72% relative to Novodra.**
 > 
 > Supporting detail:
 > - **Auralin group:** mean ending HbA1c of **7.418421** (std dev 0.391791) across **38 patients**
@@ -171,7 +171,7 @@
 > 
 > Supporting detail from the state rankings:
 > 
-> - **OR and Nebraska:** 8.355 (n = 2 each) â€” tied at the top
+> - **OR and Nebraska:** 8.355 (n = 2 each) — tied at the top
 > - **KY:** 8.254 (n = 5)
 > - **ND:** 8.2 (n = 2)
 > - **IA:** 8.17 (n = 2)
@@ -182,7 +182,7 @@
 
 ### Q5. Which adverse reactions are most common and how many patients reported each?
 
-> **Hypoglycemia is by far the most common adverse reaction, reported by 19 patients â€” more than three times any other reaction.**
+> **Hypoglycemia is by far the most common adverse reaction, reported by 19 patients — more than three times any other reaction.**
 > 
 > Supporting detail (distinct patients reporting each reaction):
 > 
@@ -202,11 +202,11 @@
 
 ### Q7. Is there a relationship between hba1c_start and hba1c_end? Quantify strength and direction.
 
-> **Yes â€” hba1c_start and hba1c_end show a very strong positive relationship:** Pearson r = 0.991201 and Spearman rho = 0.951813 across n_pairs = 70 pairs, indicating that higher starting HbA1c values are consistently associated with higher ending values.
+> **Yes — hba1c_start and hba1c_end show a very strong positive relationship:** Pearson r = 0.991201 and Spearman rho = 0.951813 across n_pairs = 70 pairs, indicating that higher starting HbA1c values are consistently associated with higher ending values.
 > 
 > Supporting detail:
 > 
-> - A linear fit gives a slope of **0.981122 per unit of hba1c_start** with intercept âˆ’0.24689 â€” i.e., each 1-unit increase in 
+> - A linear fit gives a slope of **0.981122 per unit of hba1c_start** with intercept −0.24689 — i.e., each 1-unit increase in 
 
 
 ### Q8. Using SQL with window functions: compute improvement as hba1c_start minus hba1c_end where both exist, determine each patient's drug from the dosage columns, and show the single biggest improver per drug.
@@ -219,7 +219,7 @@
 > Runners-up per drug:
 > 
 > - Auralin: Regolo Nucci, from 7.53 to 7.02, with an improvement of **0.51**
-> - Novodra: Una TraustadÃ³ttir, from 8.0 
+> - Novodra: Una Traustadóttir, from 8.0 
 
 
 

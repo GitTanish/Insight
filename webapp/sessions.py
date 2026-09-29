@@ -23,6 +23,9 @@ class WebSession:
     turns: list[dict] = field(default_factory=list)
     analysis_state: Optional[dict] = None
     multi_content: dict[str, bytes] = field(default_factory=dict)
+    # "ready" | "polishing" | "failed": LLM briefing polish runs in the
+    # background so the upload response is not blocked by an LLM round-trip.
+    findings_status: str = "ready"
 
     def reset_data(self) -> None:
         self.data_id = uuid.uuid4().hex[:12]
@@ -30,6 +33,7 @@ class WebSession:
         self.content = None
         self.profile = None
         self.findings = None
+        self.findings_status = "ready"
         self.turns = []
         self.analysis_state = None
         self.multi_content = {}

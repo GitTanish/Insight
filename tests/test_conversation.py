@@ -151,6 +151,10 @@ def test_orchestrator_injects_session_context_into_planner(
         state=carried,
     )
 
+    # Session state lives in its own message, NOT the system prompt, so the
+    # system prefix stays byte-identical across turns and stays cacheable.
     system_prompt = llm.requests[0].messages[0].content
-    assert "Active analysis state" in system_prompt
-    assert 'region eq "West"' in system_prompt
+    assert "Active analysis state" not in system_prompt
+    prompt_text = "\n".join(m.content for m in llm.requests[0].messages)
+    assert "Active analysis state" in prompt_text
+    assert 'region eq "West"' in prompt_text

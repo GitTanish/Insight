@@ -115,6 +115,9 @@ def build_planner_messages(
     session_context: str | None = None,
     sql_schema: str | None = None,
 ):
+    # The system message is the provider's prompt-cache prefix. It must stay
+    # byte-identical across turns for the same dataset, so per-turn state
+    # (history, session context, question) goes into later messages instead.
     system = PLANNER_SYSTEM.format(
         catalog=catalog,
         profile=profile.summary_for_planner(),
@@ -123,16 +126,20 @@ def build_planner_messages(
             if sql_schema else "No SQL tables are registered for this session."
         ),
     )
-    if session_context:
-        system += (
-            "\n\nActive analysis state carried over from earlier turns:\n"
-            f"{session_context}\n"
-            "When the user narrows or shifts scope (e.g. 'now only 2025', 'exclude X'), "
-            "restate the FULL resulting filter set explicitly as filter_rows steps or "
-            "filters params — never assume hidden context."
-        )
 
-    messages = [{"role": "system", "content": system}]
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+
+    if session_context:
+        messages.append({
+            "role": "user",
+            "content": (
+                "Active analysis state carried over from earlier turns:\n"
+                f"{session_context}\n\n"
+                "When the user narrows or shifts scope (e.g. 'now only 2025', 'exclude X'), "
+                "restate the FULL resulting filter set explicitly as filter_rows steps or "
+                "filters params - never assume hidden context."
+            ),
+        })
     for role, content in history[-4:]:
         prefix = "User asked: " if role == "user" else "Previous answer summary: "
         messages.append({"role": "assistant", "content": prefix + content[:400]})

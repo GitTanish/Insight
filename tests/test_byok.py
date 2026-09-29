@@ -33,12 +33,18 @@ class _RecordingChain:
     last_used = "fake/fake-1"
     tokens_in = 0
     tokens_out = 0
+    cached_tokens_in = 0
     llm_calls = 0
     llm_latency_ms = 0
 
     def __init__(self):
         self.calls = 0
         self.kwargs = {}
+
+    async def stream(self, request):
+        response = await self.generate(request)
+        if response.content:
+            yield response.content
 
     @property
     def primary_model(self):

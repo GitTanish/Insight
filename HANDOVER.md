@@ -1,6 +1,6 @@
 # INSIGHT — Session Handover
 
-> Last updated: 2026-08-22 · Engine v2.1.0-alpha · **122 offline tests passing** · **20/20 live eval cases** · Python 3.11 venv at `.venv`
+> Last updated: 2026-09-29 · Engine v2.2.0-alpha · **214 offline tests passing** · **20/20 live eval cases** · Python 3.11 venv at `.venv`
 
 ---
 
@@ -12,11 +12,12 @@ Core principle: **the LLM never executes code and never invents numbers.**
 ```
 Upload → Profiler + Zero-Prompt Briefing (top-3 findings, no question needed)
       → Planner (LLM) emits a JSON AnalysisPlan → schema/column validated → bounded repair
-      → Deterministic engine executes 11 pandas ops (chained via input_step DAG)
+      → [optional human gate: editable plan, Approve & run]
+      → Deterministic engine executes 15 ops (chained via input_step DAG)
       → Statistical router runs scipy tests by column types (t-test / Mann-Whitney / chi²+Cramér's V)
       → Validator checks sanity + INDEPENDENTLY RECOMPUTES headline numbers (2nd code path)
-      → Explainer (LLM) narrates using only computed values
-      → SSE-streamed to UI · DOCX report incl. briefing findings · optional LangSmith trace
+      → Explainer (LLM) narrates using only computed values, STREAMED token-by-token
+      → SSE to UI · DOCX report incl. briefing findings · optional LangSmith trace
 ```
 
 Two front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `webapp/`) and **Streamlit** (`main.py`, maintained).
@@ -31,18 +32,18 @@ Two front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `weba
 | `insight/llm/` | `base.py` ABC; `providers/openai_compat.py` (retry/backoff/429-aware) + groq/mistral/openai/ollama/openrouter/anthropic; `registry.py`: curated catalog + live discovery + capability flags + fallback chain + custom env provider |
 | `insight/profiling/profiler.py` | role inference (identifier-by-name heuristic!), missingness, fingerprint |
 | `insight/planning/` | `prompts.py` (hard rules incl. title/DAG/binary rules), `planner.py` (JSON repair loop) |
-| `insight/analytics/operations.py` | **the op registry** — 11 deterministic ops + `operation_catalog()` (auto-generates planner prompt) + `validate_plan_columns()` |
+| `insight/analytics/operations.py` | **the op registry** — 15 deterministic ops + `operation_catalog()` (auto-generates planner prompt) + `validate_plan_columns()` |
 | `insight/analytics/statistics.py` | scipy routing: group comparison / chi-square / correlation, effect sizes, plain-language interpretation |
 | `insight/briefing.py` | zero-prompt detectors: trend/corr/outliers/imbalance/missing/dupes → ranked findings |
 | `insight/execution/executor.py` | sequential executor; `frames` dict enables `input_step` DAG; filter_rows mutates implicit chain |
 | `insight/validation/` | `result_validator.py` (sanity/small-sample/chart-consistency) + `verification.py` (**independent recomputation**) |
 | `insight/visualization/` | `themes.py` (editorial/minimal/dark) + `renderer.py` (ChartSpec→PNG; adaptive bins live in distribution op; Other-bucket, horizontal-bar, tick formatting here) |
-| `insight/orchestrator.py` | `analyze_stream()` async generator (stage events) wrapped by `analyze()`; `run_analysis_sync()` for sync UIs |
-| `insight/observability.py` | LangSmith tracing (optional; `INSIGHT_TRACING=off` kills it) |
+| `insight/orchestrator.py` | `analyze_stream()` async generator (stage / delta / plan_review events) wrapped by `analyze()`; `run_analysis_sync()` for sync UIs. Owns cache, timing meta (`planning_ms`, `repair_ms`, `first_token_ms`, …) and the HITL gate |
+| `insight/observability.py` | LangSmith tracing (optional; `INSIGHT_TRACING=off` kills it) — root run + `trace_phase` spans |
 | `insight/settings.py` | all config via env; `.env` auto-loaded |
-| `webapp/` | FastAPI: `app.py` routes, `sessions.py` cookie store, `services.py` streamlit-free IO, Jinja `templates/`, `static/` (CSS + app.js SSE client) |
+| `webapp/` | FastAPI: `app.py` routes, `sessions.py` cookie store, `services.py` streamlit-free IO, Jinja `templates/`, `static/` (CSS + app.js SSE client w/ typing bubble + plan review) |
 | `ui_components.py` / `utils.py` / `main.py` | Streamlit legacy UI (same engine via cached wrappers) |
-| `tests/` | **85 tests**, offline (fake providers / scripted chains). Key fixtures in `conftest.py` |
+| `tests/` | **214 tests**, offline (fake providers / scripted chains). Key fixtures in `conftest.py` |
 
 ---
 
@@ -58,7 +59,7 @@ uvicorn webapp.app:app --port 8000        # → http://localhost:8000
 streamlit run main.py                      # → :8501
 
 # tests (no network / no keys needed — tracing force-off in conftest)
-pytest -q                                  # 85 passed expected (~10-30s on Windows)
+pytest -q                                  # 214 passed expected (~30-70s on Windows)
 
 # headless API
 curl -X POST localhost:8000/api/query -H "Content-Type: application/json" \
@@ -142,6 +143,46 @@ planner gets exact table schemas via `DuckSession.describe()`. Exports:
 answers. Tests: `test_sql_engine.py` (16), `test_sql_webapp.py` (2),
 `test_artifacts.py` (2). Sandbox code-interpreter explicitly skipped by owner.
 
+### P7 — Latency work (streaming, caching, plan approval) ✅
+**Text streaming**: `LLMProvider.stream()` default + real SSE parser in
+`openai_compat.py` (yields `choices[].delta.content`, falls back to non-streaming
+on endpoint rejection). `_Chain.stream()` will not splice two providers mid-answer.
+Orchestrator emits `{"type":"delta"}`; the explainer AND the grounding rewrite
+stream (the latter preceded by `delta_reset`). `app.js` renders a live typing
+bubble with a caret (reduced-motion aware), replaced by the final HTML render.
+`first_token_ms` measured ~1.0-2.0s vs a multi-second blank wait.
+
+**Prefix caching**: session state/history/question moved OUT of the planner
+system prompt into later messages so the prefix is byte-stable per dataset
+(OpenRouter `prompt_cache_key`, Anthropic ephemeral breakpoint, cached-token
+parsing → `meta.cached_prompt_tokens`).
+
+**Cache on the SSE path** (was `/api/query`-only): ~0.23-0.39s repeats vs
+7.8s cold. `_scope_signature` keys on ACTIVE FILTERS only, so a question repeats
+into cache even though the session learned things meanwhile. Approved/plan-only
+requests are excluded from cache read AND write.
+
+**Timing telemetry**: `planning_ms`, `repair_ms`, `repair_attempts`,
+`repair_issues`, `charts_ms`, `grounding_retry_ms`, `first_token_ms`,
+`explaining_ms` — a repair loop was previously invisible (31s unaccounted).
+`repair_issues` initially landed in the LangSmith span block instead of the
+response meta; watch for that class of mistake.
+
+**Background briefing**: LLM polish moved to `BackgroundTasks` so the upload
+redirect never waits on it. `findings_status` guards with a `data_id`
+generation check so a slow polish can't clobber a newer upload.
+
+**HITL plan approval**: `INSIGHT_PLAN_APPROVAL=on` (or `plan_only` per request)
+stops after planning, emits `plan_review` with editable JSON; `approved_plan`
+re-validates via `validate_plan_columns` rather than trusting the edit.
+`analyze()` raises on `plan_only` (it can't express a plan-only outcome).
+`/api/query` drives `analyze_stream` internally for this.
+
+**Non-decision — native engine (C++/Rust/Go) was measured and rejected**:
+execution is 14-62ms of a ~30s query (~0.2%), even on 250K rows. A native
+rewrite would save ~55ms. The LLM calls are 95%+ of latency. Documented in
+`future_scope.md` so it isn't re-litigated.
+
 ### Explicitly deferred (per owner decision, do not start unprompted)
 Container/subprocess sandboxing (no codegen exists), FastAPI auth/multi-user, PDF export, dashboards.
 
@@ -161,7 +202,11 @@ Container/subprocess sandboxing (no codegen exists), FastAPI auth/multi-user, PD
 ## 8. Quick sanity checklist after any change
 
 ```bash
-pytest -q                     # expect 122+
+pytest -q                     # expect 214 passed, 1 skipped
 uvicorn webapp.app:app --port 8000   # boot, upload any CSV, run one query, check SSE stages + View plan
 python evaluation/run_eval.py --model groq/openai/gpt-oss-120b   # golden-question benchmark
 ```
+
+The plan-review UI (`plan_review` → edit JSON → Approve & run) is unit-tested
+but has **not** been exercised through a real browser round trip. Verify
+manually before relying on it.

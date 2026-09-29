@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import random
-from typing import ClassVar, Literal
+from typing import AsyncIterator, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,7 @@ class LLMRequest(BaseModel):
     json_mode: bool = False
     allow_server_json: bool = True
     reasoning_effort: str | None = None
+    cache_prompt: bool = False
 
 
 class LLMResponse(BaseModel):
@@ -30,6 +31,7 @@ class LLMResponse(BaseModel):
     latency_ms: int
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cached_prompt_tokens: int | None = None
 
 
 class LLMProvider(abc.ABC):
@@ -50,6 +52,16 @@ class LLMProvider(abc.ABC):
     @abc.abstractmethod
     async def generate(self, request: LLMRequest) -> LLMResponse:
         ...
+
+    async def stream(self, request: LLMRequest) -> AsyncIterator[str]:
+        """Yield answer text incrementally.
+
+        Default implementation degrades to a single chunk so every provider is
+        stream-capable; providers that speak SSE override this.
+        """
+        response = await self.generate(request)
+        if response.content:
+            yield response.content
 
     @abc.abstractmethod
     async def list_models(self) -> list[str]:

@@ -54,7 +54,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
              {"supports_json_mode": True, "supports_reasoning_effort": True}),
             ("openai/gpt-oss-20b", "fast",
              {"supports_json_mode": True, "supports_reasoning_effort": True}),
-            ("qwen/qwen3.6-27b", "balanced", {}),
+            ("qwen/qwen3.8-27b", "balanced", {}),
         ),
     ),
     "mistral": ProviderSpec(

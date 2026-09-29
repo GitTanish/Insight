@@ -7,7 +7,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import markdown
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -24,7 +25,7 @@ from insight.llm import registry as llm_registry
 from insight.orchestrator import analyze_stream
 from insight.profiling.profiler import profile_dataframe
 from insight.settings import get_settings
-from webapp.sessions import STORE, WebSession
+from webapp.sessions import STORE, SessionStore, WebSession
 import webapp.services as svc
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -59,6 +60,7 @@ async def _lazy_discovery():
 
 
 app = FastAPI(title="Insight", lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 LOGO_PATH = BASE_DIR.parent / "assets" / "logo.png"
@@ -134,9 +136,40 @@ async def index(request: Request):
     return response
 
 
+async def _polish_session_findings(
+    store: SessionStore,
+    sid: str,
+    data_id: str,
+) -> None:
+    """LLM-polish a session's briefing after the upload response was sent."""
+    session = store.get(sid)
+    if session is None or session.data_id != data_id:
+        return
+    try:
+        from insight.briefing import polish_findings_with_llm
+        from insight.orchestrator import _build_chain_for
+
+        settings = get_settings()
+        chain = _build_chain_for(settings.fast_model_id, settings.temperature)
+        polished = await polish_findings_with_llm(
+            session.findings or [],
+            chain.generate,
+            model_name=chain.primary_model,
+        )
+        if polished and session.data_id == data_id:
+            session.findings = polished
+            session.findings_status = "ready"
+            return
+    except Exception:
+        pass
+    if session.data_id == data_id:
+        session.findings_status = "ready"
+
+
 @app.post("/upload")
 async def upload(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile | None = File(default=None),
     files: list[UploadFile] = File(default=[]),
 ):
@@ -180,26 +213,23 @@ async def upload(
             primary_name = next(iter(contents))
             profile = profile_dataframe(primary_df, primary_name, content_hash=None)
             findings = findings_to_dicts(generate_briefing(primary_df, profile))
-            if get_settings().briefing_llm_polish and not get_settings().require_user_key:
-                try:
-                    from insight.briefing import polish_findings_with_llm
-                    from insight.orchestrator import _build_chain_for
-
-                    chain = _build_chain_for(
-                        get_settings().fast_model_id, get_settings().temperature
-                    )
-                    findings = await polish_findings_with_llm(
-                        findings,
-                        chain.generate,
-                        model_name=chain.primary_model,
-                    )
-                except Exception:
-                    pass
             session.content = contents[primary_name]
             session.uploaded_name = primary_display or primary_name
             session.profile = profile
             session.findings = findings
             session.multi_content = contents
+
+            if get_settings().briefing_llm_polish and not get_settings().require_user_key:
+                # The deterministic briefing is already available, so the LLM
+                # polish is a progressive enhancement. Run it after the redirect
+                # instead of making the user wait a full LLM round-trip.
+                session.findings_status = "polishing"
+                background_tasks.add_task(
+                    _polish_session_findings,
+                    STORE,
+                    sid,
+                    session.data_id,
+                )
 
     response = RedirectResponse(f"/?flash={flash}" if flash else "/", status_code=303)
     if request.cookies.get("insight_sid") != sid:
@@ -268,6 +298,7 @@ async def query(
     question: str = Form(...),
     model_id: str = Form(default=""),
     temperature: float = Form(default=-1),
+    approved_plan: str = Form(default=""),
 ):
     sid = request.cookies.get("insight_sid") or svc.new_session_id()
     session = STORE.get_or_create(sid)
@@ -282,11 +313,19 @@ async def query(
             status_code=401,
         )
 
+    plan_payload: dict | None = None
+    if approved_plan.strip():
+        try:
+            plan_payload = json.loads(approved_plan)
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "approved_plan is not valid JSON"}, status_code=400)
+
     analysis_request = AnalysisRequest(
         question=question,
         model_id=model_id or session.model_id or None,
         temperature=(temperature if temperature is not None and temperature >= 0 else None),
         api_key=user_key,
+        approved_plan=plan_payload,
     )
     df, err = svc.parse_csv_content(session.content)
     if df is None:
@@ -337,6 +376,9 @@ async def query(
                 if final_response.meta.get("analysis_state"):
                     session.analysis_state = final_response.meta["analysis_state"]
                 yield sse_frame("result", {"html": html})
+            elif etype == "plan_review":
+                # Stops here by design: the user reviews/edits before execution.
+                yield sse_frame("plan_review", event)
             elif etype == "stage":
                 yield sse_frame("stage", event)
             else:
@@ -376,13 +418,23 @@ async def api_query(request: Request):
             status_code=401,
         )
 
+    plan_only = bool(body.get("plan_only")) or get_settings().plan_approval
+    approved_plan = body.get("approved_plan")
+    if plan_only and approved_plan is not None:
+        return JSONResponse(
+            {"error": "plan_only and approved_plan are mutually exclusive"},
+            status_code=400,
+        )
+
     analysis_request = AnalysisRequest(
         question=question,
         model_id=body.get("model_id"),
         temperature=body.get("temperature"),
         api_key=user_key,
+        plan_only=plan_only,
+        approved_plan=approved_plan,
     )
-    from insight.orchestrator import analyze
+    from insight.orchestrator import analyze_stream
 
     datasets: dict = {}
     for name, blob in session.multi_content.items():
@@ -390,13 +442,33 @@ async def api_query(request: Request):
         if parsed is not None:
             datasets[name] = parsed
 
-    response = await analyze(
+    if plan_only:
+        # Human-in-the-loop: return the reviewable plan and stop before execution.
+        async for event in analyze_stream(
+            df,
+            session.profile,
+            analysis_request,
+            artifacts_dir=svc.session_artifacts_dir(session.data_id),
+            datasets=datasets or None,
+        ):
+            if event.get("type") == "plan_review":
+                return JSONResponse({"plan": event["plan"]})
+        return JSONResponse(
+            {"error": "planner did not return a reviewable plan"}, status_code=502
+        )
+
+    response = None
+    async for event in analyze_stream(
         df,
         session.profile,
         analysis_request,
         artifacts_dir=svc.session_artifacts_dir(session.data_id),
         datasets=datasets or None,
-    )
+    ):
+        if event.get("type") == "result":
+            response = event["response"]
+    if response is None:
+        return JSONResponse({"error": "analysis produced no result"}, status_code=500)
     return JSONResponse(response.model_dump(mode="json"))
 
 

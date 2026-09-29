@@ -56,7 +56,16 @@ class AnthropicProvider(OpenAICompatibleProvider):
             "messages": messages,
         }
         if system_text:
-            payload["system"] = system_text
+            if request.cache_prompt:
+                # Explicit ephemeral breakpoint so the stable planner prefix is
+                # read from Anthropic's prompt cache on follow-up turns.
+                payload["system"] = [{
+                    "type": "text",
+                    "text": system_text,
+                    "cache_control": {"type": "ephemeral"},
+                }]
+            else:
+                payload["system"] = system_text
         if request.temperature is not None:
             payload["temperature"] = request.temperature
         return payload

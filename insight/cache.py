@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from insight.conversation.state import AnalysisSessionState, serialize_state_for_planner
+from insight.conversation.state import AnalysisSessionState
 from insight.domain.dataset import DatasetProfile
 from insight.domain.query import AnalysisRequest
 from insight.domain.visualization import AnalysisResponse
@@ -16,6 +16,21 @@ from insight.settings import get_settings
 
 def normalize_question(question: str) -> str:
     return " ".join(question.lower().split())
+
+
+def _scope_signature(state: Optional[AnalysisSessionState]) -> str:
+    """Only active filters change which rows an answer covers.
+
+    dims/metrics/result digests change prompt context but not the data scope,
+    so they are deliberately excluded: asking the same question twice must hit
+    the cache even though the session learned something in between.
+    """
+    if state is None or not state.active_filters:
+        return "no-filter"
+    parts = sorted(
+        f"{f.column.lower()}:{f.op}:{f.value}" for f in state.active_filters
+    )
+    return "|".join(parts)
 
 
 def cache_key_for(
@@ -36,7 +51,7 @@ def cache_key_for(
         normalize_question(request.question),
         request.model_id or settings.default_model_id,
         f"{temperature:.3f}",
-        serialize_state_for_planner(state),
+        _scope_signature(state),
     ])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
