@@ -118,6 +118,11 @@ async def healthz():
     return {"status": "ok"}
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.get("/")
 async def index(request: Request):
     sid = request.cookies.get("insight_sid") or svc.new_session_id()
@@ -145,6 +150,7 @@ async def upload(
     flash = None
     contents: dict[str, bytes] = {}
     primary_df = None
+    primary_display = None
     if not incoming:
         flash = "No file received."
     else:
@@ -153,13 +159,16 @@ async def upload(
             if len(data) > MAX_UPLOAD_BYTES:
                 flash = f"{upload_file.filename} exceeds the 80 MB limit."
                 continue
-            parsed, err = svc.parse_csv_content(data)
-            if parsed is None:
-                flash = f"{upload_file.filename}: {err or 'could not parse CSV.'}"
+            tables, err = svc.parse_tables(upload_file.filename, data)
+            if tables is None:
+                flash = f"{upload_file.filename}: {err or 'could not parse file.'}"
                 continue
-            contents[upload_file.filename] = data
+            for table_name, table_df in tables.items():
+                normalized = table_df.to_csv(index=False).encode("utf-8")
+                contents[table_name] = normalized
             if primary_df is None:
-                primary_df = parsed
+                primary_df = next(iter(tables.values()))
+                primary_display = upload_file.filename
 
         if primary_df is None:
             flash = flash or "Could not parse CSV."
@@ -171,7 +180,7 @@ async def upload(
             primary_name = next(iter(contents))
             profile = profile_dataframe(primary_df, primary_name, content_hash=None)
             findings = findings_to_dicts(generate_briefing(primary_df, profile))
-            if get_settings().briefing_llm_polish:
+            if get_settings().briefing_llm_polish and not get_settings().require_user_key:
                 try:
                     from insight.briefing import polish_findings_with_llm
                     from insight.orchestrator import _build_chain_for
@@ -187,7 +196,7 @@ async def upload(
                 except Exception:
                     pass
             session.content = contents[primary_name]
-            session.uploaded_name = primary_name
+            session.uploaded_name = primary_display or primary_name
             session.profile = profile
             session.findings = findings
             session.multi_content = contents
@@ -196,6 +205,37 @@ async def upload(
     if request.cookies.get("insight_sid") != sid:
         response.set_cookie("insight_sid", sid, httponly=True, samesite="lax")
     return response
+
+
+@app.post("/export/docx/custom")
+async def export_docx_custom(request: Request, turn: list[int] = Form(default=[])):
+    sid = request.cookies.get("insight_sid")
+    session = STORE.get(sid)
+    if session is None or not session.turns:
+        return RedirectResponse(
+            "/?flash=Ask%20a%20question%20first%20%E2%80%94%20nothing%20to%20export%20yet.",
+            status_code=303,
+        )
+    wanted = sorted({int(i) for i in turn if 0 <= int(i) < len(session.turns)})
+    if not wanted:
+        return RedirectResponse(
+            "/?flash=Select%20at%20least%20one%20question%20for%20a%20custom%20report.",
+            status_code=303,
+        )
+    import datetime
+
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    dataset_name = session.uploaded_name or "Dataset"
+    selected_turns = [session.turns[i] for i in wanted]
+    payload = svc.build_report_docx_bytes(
+        selected_turns, dataset_name, date_str, findings=session.findings
+    )
+    filename = f"Insight_Report_{dataset_name.replace('.csv', '')}_custom.docx"
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/models/refresh")
@@ -235,10 +275,18 @@ async def query(
     if not session.has_dataset:
         return JSONResponse({"error": "no dataset uploaded"}, status_code=400)
 
+    user_key = request.headers.get("x-insight-key") or None
+    if get_settings().require_user_key and not user_key:
+        return JSONResponse(
+            {"error": "This deployment is bring-your-own-key. Paste an API key in the left rail."},
+            status_code=401,
+        )
+
     analysis_request = AnalysisRequest(
         question=question,
         model_id=model_id or session.model_id or None,
         temperature=(temperature if temperature is not None and temperature >= 0 else None),
+        api_key=user_key,
     )
     df, err = svc.parse_csv_content(session.content)
     if df is None:
@@ -321,10 +369,18 @@ async def api_query(request: Request):
     if df is None:
         return JSONResponse({"error": err}, status_code=400)
 
+    user_key = request.headers.get("x-insight-key") or (body or {}).get("api_key") or None
+    if get_settings().require_user_key and not user_key:
+        return JSONResponse(
+            {"error": "This deployment is bring-your-own-key. Provide api_key or X-Insight-Key."},
+            status_code=401,
+        )
+
     analysis_request = AnalysisRequest(
         question=question,
         model_id=body.get("model_id"),
         temperature=body.get("temperature"),
+        api_key=user_key,
     )
     from insight.orchestrator import analyze
 
@@ -349,7 +405,10 @@ async def export_docx(request: Request):
     sid = request.cookies.get("insight_sid")
     session = STORE.get(sid)
     if session is None or not session.turns:
-        return JSONResponse({"error": "nothing to export"}, status_code=400)
+        return RedirectResponse(
+            "/?flash=Ask%20a%20question%20first%20%E2%80%94%20nothing%20to%20export%20yet.",
+            status_code=303,
+        )
     import datetime
 
     date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")

@@ -22,6 +22,23 @@ DELIMITERS = [",", ";", "\t"]
 def parse_csv(content: bytes) -> tuple[pd.DataFrame | None, str | None]:
     settings = get_settings()
     last_error = "empty file"
+    try:
+        import io as _io
+
+        import openpyxl  # noqa: F401
+
+        workbook = pd.read_excel(_io.BytesIO(content), sheet_name=None)
+        for sheet_df in workbook.values():
+            if sheet_df is not None and not sheet_df.empty and len(sheet_df.columns):
+                if len(sheet_df) > settings.max_upload_rows:
+                    return (
+                        None,
+                        f"File has {len(sheet_df):,} rows "
+                        f"(max {settings.max_upload_rows:,})",
+                    )
+                return sheet_df, None
+    except Exception:
+        pass
     for encoding in ENCODINGS:
         for delimiter in DELIMITERS:
             try:
@@ -32,13 +49,14 @@ def parse_csv(content: bytes) -> tuple[pd.DataFrame | None, str | None]:
                     if len(df) > settings.max_upload_rows:
                         return (
                             None,
-                            f"File has {len(df):,} rows (max {settings.max_upload_rows:,})",
+                            f"File has {len(df):,} rows "
+                            f"(max {settings.max_upload_rows:,})",
                         )
                     return df, None
                 last_error = f"parsed with {encoding}/{delimiter!r} but empty"
             except Exception as exc:
                 last_error = f"{encoding}/{delimiter!r}: {exc}"
-    return None, f"Could not parse CSV. Last attempt — {last_error}"
+    return None, f"Could not parse file. Last attempt — {last_error}"
 
 
 @st.cache_data(show_spinner=False)

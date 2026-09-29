@@ -69,7 +69,7 @@ streamlit run main.py
 
 ### Using it
 
-1. **Upload a CSV** in the left rail
+1. **Upload a CSV or Excel file** in the left rail (multi-sheet workbooks register one table per sheet)
 2. The **Zero-Prompt Briefing** appears immediately after upload — top findings with **Investigate** buttons, no question needed
 3. Pick a model — defaults to Groq `gpt-oss-120b`
 4. Ask questions; watch live pipeline stages (*Planning → Executing → Validating → Explaining*) stream in as they happen
@@ -91,7 +91,7 @@ curl -X POST http://localhost:8000/api/query \
 pytest
 ```
 
-122 offline tests via scripted fake LLMs. A separate live eval suite runs only
+172 offline tests via scripted fake LLMs. A separate live eval suite runs only
 with `INSIGHT_RUN_EVAL=1 pytest -m eval` (needs a provider key):
 
 ```bash

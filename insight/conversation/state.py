@@ -18,15 +18,24 @@ class ActiveFilter(BaseModel):
         return f"{self.column} {self.op} {rendered}"
 
 
+class ResultDigest(BaseModel):
+    question: str = ""
+    operations: list[str] = Field(default_factory=list)
+    key_facts: list[str] = Field(default_factory=list)
+
+
 class AnalysisSessionState(BaseModel):
     dataset_id: str = ""
     active_filters: list[ActiveFilter] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)
     dims: list[str] = Field(default_factory=list)
+    recent_results: list[ResultDigest] = Field(default_factory=list)
     turns_analyzed: int = 0
 
     def is_empty(self) -> bool:
-        return not (self.active_filters or self.metrics or self.dims)
+        return not (
+            self.active_filters or self.metrics or self.dims or self.recent_results
+        )
 
 
 def _filters_from_step(step) -> list[ActiveFilter]:
@@ -106,6 +115,23 @@ def extract_state_from_plan(
     return state
 
 
+def record_result(
+    state: AnalysisSessionState,
+    question: str,
+    operations: list[str],
+    key_facts: list[str],
+    max_entries: int = 3,
+) -> AnalysisSessionState:
+    """Append a compact digest of the latest answer so follow-ups build on it."""
+    digest = ResultDigest(
+        question=question[:160],
+        operations=[op for op in operations if op][:6],
+        key_facts=[f for f in key_facts if f][:3],
+    )
+    state.recent_results = (state.recent_results + [digest])[-max_entries:]
+    return state
+
+
 def serialize_state_for_planner(state: Optional[AnalysisSessionState]) -> str:
     if state is None or state.is_empty():
         return "(no active filters or tracked fields)"
@@ -117,4 +143,10 @@ def serialize_state_for_planner(state: Optional[AnalysisSessionState]) -> str:
         lines.append(f"dimensions analyzed so far: {', '.join(state.dims)}")
     if state.metrics:
         lines.append(f"metrics analyzed so far: {', '.join(state.metrics)}")
+    for digest in state.recent_results:
+        facts = f" | computed: {'; '.join(digest.key_facts)}" if digest.key_facts else ""
+        lines.append(
+            f'previous question: "{digest.question}" '
+            f"[{', '.join(digest.operations) or 'no ops'}]{facts}"
+        )
     return "\n".join(lines)

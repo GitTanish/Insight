@@ -167,7 +167,7 @@ def _ensure_custom_registered(settings: Settings) -> None:
         cls=cls,
         api_key_env=None,
         curated_models=models,
-        supports_discovery=True,
+        supports_discovery=bool(settings.custom_discovery),
         requires_key=True,
         default_timeout_s=90.0,
         settings_key_attr="custom_api_key",
@@ -255,20 +255,24 @@ def register_discovered(provider_name: str, model_ids: list[str]) -> list[ModelI
     return added
 
 
-def create_provider(provider_name: str, settings: Settings | None = None) -> LLMProvider:
+def create_provider(
+    provider_name: str,
+    settings: Settings | None = None,
+    api_key: str | None = None,
+) -> LLMProvider:
     settings = settings or get_settings()
     _ensure_custom_registered(settings)
     spec = PROVIDERS.get(provider_name)
     if spec is None:
         raise ConfigError(f"no provider implementation for '{provider_name}'")
-    api_key = _api_key_for(spec, settings)
+    resolved_key = api_key or _api_key_for(spec, settings)
     kwargs: dict = {
         "timeout_s": spec.default_timeout_s,
         "max_retries": settings.max_retries_per_call,
     }
     if provider_name == "ollama":
         kwargs["base_url_override"] = settings.ollama_base_url
-    return spec.cls(api_key=api_key or "", **kwargs)
+    return spec.cls(api_key=resolved_key or "", **kwargs)
 
 
 async def discover_models(
@@ -305,7 +309,9 @@ async def discover_models(
 
 
 def build_llm_chain(
-    preferred_model_id: str | None, settings: Settings | None = None
+    preferred_model_id: str | None,
+    settings: Settings | None = None,
+    api_key: str | None = None,
 ) -> tuple[ModelInfo, list[tuple[LLMProvider, str, ModelInfo]]]:
     settings = settings or get_settings()
     _ensure_custom_registered(settings)
@@ -319,7 +325,7 @@ def build_llm_chain(
             return
         try:
             info = get_model_info(model_id)
-            provider = create_provider(info.provider, settings)
+            provider = create_provider(info.provider, settings, api_key=api_key)
         except ConfigError:
             return
         seen.add(model_id)

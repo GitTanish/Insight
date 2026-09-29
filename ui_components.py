@@ -128,7 +128,7 @@ def _render_sidebar():
     with st.sidebar:
         st.header("Configuration")
 
-        uploaded = st.file_uploader("Upload a CSV file", type=["csv"])
+        uploaded = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx", "xls"])
         if uploaded is not None:
             content = uploaded.getvalue()
             if (

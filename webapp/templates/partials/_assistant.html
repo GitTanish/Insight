@@ -6,8 +6,9 @@
     {% endif %}
 
     {% for plot in response.plots %}
+        {% set fname = plot.path.replace('\\', '/').split('/')[-1] %}
         <figure class="chart">
-            <img src="/artifacts/{{ data_id }}/{{ plot.path.split('/')[-1] }}" alt="{{ plot.title }}">
+            <img src="/artifacts/{{ data_id }}/{{ fname }}" alt="{{ plot.title }}">
             <figcaption>{{ plot.title }}</figcaption>
         </figure>
     {% endfor %}
@@ -28,6 +29,9 @@
         {% endif %}
         {% if response.meta.get('repair_attempted') %}
             <span class="chip chip-warn">⚠ self-repaired</span>
+        {% endif %}
+        {% if response.meta.get('unverified_figures') %}
+            <span class="chip chip-warn">⚠ {{ response.meta['unverified_figures'] | length }} unverified figure(s)</span>
         {% endif %}
     </div>
 
@@ -92,5 +96,14 @@
     {% for e in response.evidence %}{% if e.kind == 'warning' %}{% if warning_items.append(e.label) %}{% endif %}{% endif %}{% endfor %}
     {% if warning_items %}
         <div class="warn-box">⚠ {{ warning_items[:3] | join(' · ') }}{% if warning_items | length > 3 %} (+{{ warning_items | length - 3 }} more){% endif %}</div>
+    {% endif %}
+
+    {% if response.meta.get('followups') %}
+        <div class="followups">
+            <span class="mono-label">Suggested next</span>
+            {% for q in response.meta['followups'] %}
+                <button class="btn tiny followup" data-q="{{ q }}">{{ q }}</button>
+            {% endfor %}
+        </div>
     {% endif %}
 </article>

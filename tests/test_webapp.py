@@ -1,6 +1,7 @@
 import io
 import json
 import os
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -120,6 +121,21 @@ def test_full_flow_upload_query_export_clear(client):
     assert "stage" in types and "result" in types and "end" in types
     result_payload = next(d for e, d in events if e == "result")
     assert "West leads revenue" in result_payload["html"]
+    assert "Suggested next" in result_payload["html"]
+
+    followup_events = [d for e, d in events if e == "suggestions"]
+    assert followup_events and followup_events[-1]["followups"]
+
+    page = client.get("/")
+    import re as _re
+
+    img_srcs = _re.findall(r'src="/artifacts/([^"]+)/([^"]+)"', page.text)
+    assert img_srcs, "expected at least one chart image"
+    for data_id, fname in img_srcs:
+        assert ":" not in fname, f"absolute path leaked into URL: {fname}"
+        assert "\\" not in fname and "/" not in fname, f"non-basename in URL: {fname}"
+        served = client.get(f"/artifacts/{data_id}/{fname}")
+        assert served.status_code == 200, f"chart URL 404s: {fname}"
 
     page = client.get("/")
     assert "West leads revenue." in page.text
@@ -127,6 +143,32 @@ def test_full_flow_upload_query_export_clear(client):
 
     docx = client.get("/export/docx")
     assert docx.status_code == 200 and docx.content[:2] == b"PK"
+
+    from docx import Document as _Doc
+
+    doc = _Doc(io.BytesIO(docx.content))
+    paragraphs = "\n".join(p.text for p in doc.paragraphs)
+    assert "Which region has the highest revenue?" in paragraphs
+    assert "Top Findings" in paragraphs
+
+    second_q = client.post(
+        "/query", data={"question": "Show me a visualization"}
+    )
+    assert second_q.status_code == 200
+    stacked = client.get("/export/docx")
+    stacked_doc = _Doc(io.BytesIO(stacked.content))
+    stacked_text = "\n".join(p.text for p in stacked_doc.paragraphs)
+    assert "Which region has the highest revenue?" in stacked_text
+    assert "Show me a visualization" in stacked_text
+
+    custom = client.post("/export/docx/custom", data={"turn": "1"})
+    custom_doc = _Doc(io.BytesIO(custom.content))
+    custom_text = "\n".join(p.text for p in custom_doc.paragraphs)
+    assert "Show me a visualization" in custom_text
+    assert "Which region has the highest revenue?" not in custom_text
+
+    none_selected = client.post("/export/docx/custom", data={}, follow_redirects=False)
+    assert none_selected.status_code == 303
 
     api = client.post("/api/query", json={"question": "top region"})
     assert api.status_code == 200
@@ -140,3 +182,39 @@ def test_full_flow_upload_query_export_clear(client):
 def test_query_without_dataset_rejected(client):
     r = client.post("/query", data={"question": "anything"}, )
     assert r.status_code == 400
+
+
+def test_docx_button_always_visible_and_friendly_redirect(client):
+    page = client.get("/")
+    assert "Export DOCX" in page.text
+
+    from webapp.app import app as webapp_app
+
+    fresh = TestClient(webapp_app)
+    r = fresh.get("/export/docx", follow_redirects=False)
+    assert r.status_code == 303
+    assert "flash=" in r.headers["location"]
+
+
+def test_streaming_ui_contract_present(client):
+    page = client.get("/")
+    assert 'id="stop-btn"' in page.text
+    assert 'id="pipeline-status"' in page.text
+    assert 'id="composer"' in page.text
+
+    js = (Path(__file__).resolve().parent.parent / "webapp" / "static" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    # stage rail covers every server-emitted stage key
+    for key in ("planning", "executing", "repairing", "rendering", "explaining", "grounding"):
+        assert f"{key}:" in js, f"stage key {key} unmapped in app.js"
+    assert "validating" in js
+    # abort support and a non-auto-hiding error surface
+    assert "AbortController" in js
+    assert "setError" in js
+    assert "setTimeout(hideStatus" not in js
+
+    css = (Path(__file__).resolve().parent.parent / "webapp" / "static" / "style.css").read_text(
+        encoding="utf-8"
+    )
+    assert ".stage-rail" in css and ".btn.stop" in css

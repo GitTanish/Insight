@@ -22,6 +22,10 @@
     profile v{{ session.profile.fingerprint.profile_version }}
 </p>
 
+{% if session.profile.artifact_columns %}
+    <p class="caption">Ignored index artifact column(s): {{ session.profile.artifact_columns | join(', ') }}</p>
+{% endif %}
+
 <details class="evidence">
     <summary>Column profiles</summary>
     <table class="data-table">

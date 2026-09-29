@@ -15,3 +15,4 @@ class AnalysisRequest(BaseModel):
     history: list[ChatTurn] = Field(default_factory=list)
     model_id: Optional[str] = None
     temperature: Optional[float] = None
+    api_key: Optional[str] = None

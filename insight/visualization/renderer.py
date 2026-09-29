@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 
@@ -108,9 +108,31 @@ def _tick_formatter():
     return FuncFormatter(lambda val, _: _human_number(val))
 
 
+_GLYPH_SUBSTITUTIONS = {
+    "\u2011": "-",   # non-breaking hyphen
+    "\u2010": "-",
+    "\u2012": "-",
+    "\u2013": "-",
+    "\u2014": "-",
+    "\u2212": "-",
+    "\u00a0": " ",
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+}
+
+
+def _font_safe(text: str) -> str:
+    """Replace typographic unicode that editorial chart fonts lack."""
+    for source, replacement in _GLYPH_SUBSTITUTIONS.items():
+        text = text.replace(source, replacement)
+    return text
+
+
 def _style_axes(ax, spec: ChartSpec, theme: EditorialTheme, title_override: str | None = None) -> None:
     ax.set_title(
-        title_override or spec.title,
+        _font_safe(title_override or spec.title),
         fontsize=14,
         fontweight="bold",
         loc="left",
@@ -118,9 +140,9 @@ def _style_axes(ax, spec: ChartSpec, theme: EditorialTheme, title_override: str 
         color=theme.foreground,
     )
     if spec.x_label:
-        ax.set_xlabel(spec.x_label)
+        ax.set_xlabel(_font_safe(spec.x_label))
     if spec.y_label:
-        ax.set_ylabel(spec.y_label)
+        ax.set_ylabel(_font_safe(spec.y_label))
 
 
 def _render_bar_or_pie(
@@ -167,7 +189,7 @@ def _render_bar_or_pie(
             labelcolor=theme.foreground,
             fontsize=8,
         )
-        ax.set_title(title, fontsize=14, fontweight="bold", pad=12)
+        ax.set_title(_font_safe(title), fontsize=14, fontweight="bold", pad=12)
         ax.grid(False)
         return
 
@@ -188,7 +210,7 @@ def _render_bar_or_pie(
             edgecolor=theme.foreground, linewidth=0.6,
         )
         ax.set_yticks(list(y_positions))
-        ax.set_yticklabels([str(l)[:34] for l in labels], fontsize=8)
+        ax.set_yticklabels([_font_safe(str(l))[:34] for l in labels], fontsize=8)
         ax.xaxis.set_major_formatter(_tick_formatter())
         ax.grid(axis="y", visible=False)
         max_idx = int(values.idxmax()) if len(values) else None
@@ -209,7 +231,7 @@ def _render_bar_or_pie(
             bar.set_color(theme.foreground)
     rotation = 45 if max_label_len > 12 else 30
     ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=rotation, ha="right", fontsize=8)
+    ax.set_xticklabels([_font_safe(str(l)) for l in labels], rotation=rotation, ha="right", fontsize=8)
     ax.yaxis.set_major_formatter(_tick_formatter())
     _style_axes(ax, spec, theme, title_override=title)
 
@@ -262,7 +284,7 @@ def _render_hist(ax, df: pd.DataFrame, spec: ChartSpec, theme: EditorialTheme) -
         edgecolor=theme.foreground, linewidth=0.6,
     )
     ax.set_xticks(range(len(counts)))
-    ax.set_xticklabels([b[:18] for b in bins], rotation=35, ha="right", fontsize=7.5)
+    ax.set_xticklabels([_font_safe(str(b))[:18] for b in bins], rotation=35, ha="right", fontsize=7.5)
     ax.yaxis.set_major_formatter(_tick_formatter())
     _style_axes(ax, spec, theme)
 

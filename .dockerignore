@@ -7,12 +7,36 @@ __pycache__/
 .github/
 .artifacts/
 .env
-.env.example
+.env.*
+!.env.example
 image/
 assets/*.png.bak
 evaluation/
 docs/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 Dockerfile
 .dockerignore
+
+# Local data & databases
+data/
+*.duckdb
+*.sqlite3
+*.db
+
+# Local test files & logs
+tests/test_byok.py
+tests/test_chain_fallback.py
+tests/test_custom_provider.py
+tests/test_invariants.py
+TEST.md
+*.log
+temp/
+tmp/
+
+# OS and editor files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

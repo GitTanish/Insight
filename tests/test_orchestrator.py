@@ -78,3 +78,22 @@ def test_repair_after_execution_failure(stub_chain_factory, sales_df, profile, t
     assert response.validation.valid
     assert response.answer.startswith("**West leads**")
     assert len(llm.requests) == 3
+
+
+def test_explainer_receives_rendered_figure_list(stub_chain_factory, sales_df, profile, tmp_path):
+    llm = stub_chain_factory([VALID_PLAN, EXPLANATION])
+
+    run_analysis_sync(
+        sales_df,
+        profile,
+        AnalysisRequest(question="Which region has the highest revenue?"),
+        artifacts_dir=tmp_path,
+    )
+
+    explainer_call = llm.requests[1]
+    user_content = explainer_call.messages[1].content
+    assert "Rendered figures" in user_content
+    assert '1. bar — "Revenue by Region"' in user_content
+
+    system_content = explainer_call.messages[0].content
+    assert "ONLY figures listed" in system_content

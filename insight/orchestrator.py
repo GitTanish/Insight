@@ -15,6 +15,7 @@ from insight.domain.visualization import AnalysisResponse, Evidence
 from insight.conversation.state import (
     AnalysisSessionState,
     extract_state_from_plan,
+    record_result,
     serialize_state_for_planner,
 )
 from insight.execution.executor import execute_plan
@@ -74,6 +75,10 @@ class _Chain:
             started = time.monotonic()
             try:
                 response = await provider.generate(effective)
+                if not (response.content or "").strip():
+                    raise InsightError(
+                        f"{provider.name}/{model} returned empty content"
+                    )
                 self.last_used = f"{provider.name}/{model}"
                 self.llm_calls += 1
                 self.llm_latency_ms += response.latency_ms
@@ -101,8 +106,14 @@ class _Chain:
         raise AllProvidersFailedError(errors)
 
 
-def _build_chain_for(model_id: Optional[str], temperature: float) -> _Chain:
-    _, entries = build_llm_chain(model_id or get_settings().default_model_id)
+def _build_chain_for(
+    model_id: Optional[str],
+    temperature: float,
+    api_key: Optional[str] = None,
+) -> _Chain:
+    _, entries = build_llm_chain(
+        model_id or get_settings().default_model_id, api_key=api_key
+    )
     return _Chain(entries=entries, temperature=temperature, reasoning_effort=get_settings().reasoning_effort)
 
 
@@ -198,6 +209,7 @@ async def analyze_stream(
     chain = _build_chain_for(
         request.model_id,
         settings.temperature if request.temperature is None else request.temperature,
+        api_key=request.api_key,
     )
     attach_metadata(
         dataset_id=profile.fingerprint.dataset_id,
@@ -306,12 +318,38 @@ async def analyze_stream(
     analysis_state = extract_state_from_plan(plan, base=state)
     if profile.fingerprint.dataset_id:
         analysis_state.dataset_id = profile.fingerprint.dataset_id
+
+    key_facts = [
+        f"{c.label}: {_cell(c.value)}"
+        for c in execution.all_calculations()[:12]
+        if c.value not in (None, "")
+    ][:3]
+    record_result(
+        analysis_state,
+        question=request.question,
+        operations=[s.operation for s in execution.steps if s.success],
+        key_facts=key_facts,
+    )
     yield {"type": "state", "state": analysis_state.model_dump(mode="json")}
+
+    try:
+        from insight.agentic import suggest_followups
+
+        followups = suggest_followups(
+            profile, state=analysis_state, tables=table_datasets
+        )
+    except Exception:
+        followups = []
+    yield {"type": "suggestions", "followups": followups}
 
     yield {"type": "stage", "key": "rendering", "label": "Rendering editorial charts..."}
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     plots, chart_warnings = render_charts(
         plan.charts, execution.tables_by_step(), artifacts_dir, EDITORIAL_THEME
+    )
+    figures_text = "\n".join(
+        f"{i}. {plot.chart_type} — \"{plot.title}\""
+        for i, plot in enumerate(plots, start=1)
     )
 
     yield {"type": "stage", "key": "explaining", "label": "Composing the dispatch..."}
@@ -324,6 +362,7 @@ async def analyze_stream(
                 tables_markdown=_tables_markdown(execution),
                 calculations_text=_calculations_text(execution),
                 warnings_text="\n".join(validation.warning_messages() + chart_warnings),
+                figures_text=figures_text,
             )
         ],
         model=chain.primary_model,
@@ -340,12 +379,79 @@ async def analyze_stream(
         answer = _fallback_answer(validation, execution)
     explaining_ms = int((time.monotonic() - t_explain) * 1000)
 
+    unverified_figures: list[str] = []
+    if settings.answer_grounded_check and answer and answer != _fallback_answer(validation, execution):
+        from insight.validation.grounding import (
+            build_grounding_retry_message,
+            find_ungrounded_numbers,
+        )
+
+        unverified_figures = find_ungrounded_numbers(
+            answer,
+            execution.all_calculations(),
+            list(execution.tables_by_step().values()),
+            notes="; ".join(
+                filter(None, [getattr(s.output, "notes", None) for s in execution.steps if s.success])
+            ),
+            warnings=validation.warning_messages() + chart_warnings,
+        )
+        if unverified_figures:
+            yield {
+                "type": "stage",
+                "key": "grounding",
+                "label": "Verifying cited numbers...",
+                "level": "warn",
+            }
+            retry_messages = [
+                {"role": m["role"], "content": m["content"]}
+                for m in build_explainer_messages(
+                    question=request.question,
+                    objective=plan.objective,
+                    tables_markdown=_tables_markdown(execution),
+                    calculations_text=_calculations_text(execution),
+                    warnings_text="\n".join(validation.warning_messages() + chart_warnings),
+                    figures_text=figures_text,
+                )
+            ]
+            retry_messages.append({"role": "assistant", "content": answer})
+            retry_messages.append({
+                "role": "user",
+                "content": build_grounding_retry_message(unverified_figures),
+            })
+            try:
+                retry_response = await chain.generate(LLMRequest(
+                    messages=retry_messages,
+                    model=chain.primary_model,
+                    temperature=None,
+                    max_tokens=settings.explainer_max_tokens,
+                    reasoning_effort=chain.reasoning_effort,
+                ))
+                retried_answer = retry_response.content.strip()
+                still_bad = find_ungrounded_numbers(
+                    retried_answer,
+                    execution.all_calculations(),
+                    list(execution.tables_by_step().values()),
+                    warnings=validation.warning_messages() + chart_warnings,
+                )
+                answer = retried_answer
+                unverified_figures = still_bad
+            except InsightError:
+                pass
+
     evidence: list[Evidence] = [
         Evidence(kind="calculation", label=c.label, value=_cell(c.value), detail=c.detail)
         for c in execution.all_calculations()[:12]
     ]
     for message in validation.warning_messages() + chart_warnings:
         evidence.append(Evidence(kind="warning", label=message))
+    if unverified_figures:
+        evidence.append(Evidence(
+            kind="warning",
+            label=(
+                "answer contained figures not found in computed results: "
+                + ", ".join(unverified_figures[:6])
+            ),
+        ))
 
     meta: dict = {
         "model": chain.last_used,
@@ -361,6 +467,8 @@ async def analyze_stream(
         "llm_latency_ms": chain.llm_latency_ms,
         "dataset_id": profile.fingerprint.dataset_id,
         "analysis_state": analysis_state.model_dump(mode="json"),
+        "followups": followups,
+        "unverified_figures": unverified_figures,
         "steps": [
             {
                 "step_id": s.step_id,

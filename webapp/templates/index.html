@@ -9,8 +9,8 @@
                 <div class="alert alert-error">{{ request.query_params.get('flash') }}</div>
             {% endif %}
             <form action="/upload" method="post" enctype="multipart/form-data" class="stack">
-                <label>Upload CSVs (joins welcome)
-                    <input type="file" name="files" accept=".csv" multiple required>
+                <label>Upload CSVs or Excel (joins welcome)
+                    <input type="file" name="files" accept=".csv,.xlsx,.xls,.xlsm" multiple required>
                 </label>
                 <button type="submit" class="btn">Upload</button>
             </form>
@@ -39,6 +39,13 @@
                 <input id="temp-range" type="range" min="0" max="1" step="0.1" value="{{ temperature }}">
                 <span id="temp-val">{{ temperature }}</span>
             </label>
+            <label class="range-label" style="margin-top:0.7rem">Your API key
+                <input id="user-key" type="password" autocomplete="off"
+                       placeholder="sk-… (optional)" style="flex:1">
+            </label>
+            <p class="caption" style="margin-top:0.3rem">
+                Stored only in this browser; sent per-request. Leave empty to use the hosted pool.
+            </p>
         </div>
 
         <details class="card">
@@ -51,13 +58,26 @@
         </details>
 
         <div class="row-btns">
-            {% if session.turns %}
-                <a class="btn" href="/export/docx">Export DOCX</a>
-            {% endif %}
+            <a class="btn" href="/export/docx">Export DOCX</a>
             <form action="/clear" method="post">
                 <button type="submit" class="btn">Clear</button>
             </form>
         </div>
+
+        {% if session.turns %}
+        <details class="card">
+            <summary>Custom report</summary>
+            <form method="post" action="/export/docx/custom" class="stack">
+                {% for t in session.turns %}
+                <label style="font-size:0.85rem; display:flex; gap:6px; align-items:flex-start">
+                    <input type="checkbox" name="turn" value="{{ loop.index0 }}" checked>
+                    <span>{{ loop.index }}. {{ t.question[:44] }}</span>
+                </label>
+                {% endfor %}
+                <button type="submit" class="btn tiny">Export selected</button>
+            </form>
+        </details>
+        {% endif %}
 
         <details class="card">
             <summary>How Insight works</summary>
@@ -105,7 +125,7 @@
         <section id="chat">
             {% for turn in session.turns %}
                 <div class="turn user"><div class="bubble user-bubble">{{ turn.question }}</div></div>
-                {% with response = turn.response %}{% include "partials/_assistant.html" %}{% endwith %}
+                {% with response = turn.response, data_id = session.data_id %}{% include "partials/_assistant.html" %}{% endwith %}
             {% endfor %}
         </section>
 
@@ -114,6 +134,7 @@
         <form id="composer" class="composer">
             <textarea name="question" rows="2" placeholder="Ask a question about your data..." required></textarea>
             <button type="submit" class="btn send">Dispatch</button>
+            <button type="button" class="btn stop" id="stop-btn" hidden title="Stop current analysis">Stop</button>
         </form>
         <p class="caption center">LLM plans · pandas computes · validator verifies · every claim links to its calculation.</p>
     </main>

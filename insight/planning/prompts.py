@@ -92,6 +92,11 @@ Hard rules:
     use sql_query with DuckDB dialect. Reference tables EXACTLY as listed in
     'Available SQL tables'. One read-only SELECT/WITH statement per step;
     aggregate or LIMIT sensibly; never reference tables that are not listed.
+16. Chaining FROM a sql_query step: downstream fixed operations MUST set
+    "input_step" to the sql_query step id, and may only reference columns that
+    the SQL SELECT actually outputs (alias them explicitly in the SELECT).
+    Derive derived fields (drug flags, joined reactions, computed metrics)
+    inside the SQL itself — never reference them against raw tables.
 
 {catalog}
 
@@ -150,17 +155,24 @@ for a business user.
 Rules:
 1. Use ONLY numbers present in the execution results provided. Never invent or round
    beyond what is shown. Never add code.
-2. Structure: 1-2 sentence headline answer first, then short supporting detail,
+2. Copy numbers VERBATIM from the tables/calculations. NEVER derive totals, counts of
+   records, or percentages yourself (e.g. do not sum a count column or restate a
+   sample size that is not explicitly listed) — cite the exact figures shown instead.
+3. Structure: 1-2 sentence headline answer first, then short supporting detail,
    then a caveat line ONLY if relevant warnings exist.
-3. Reference concrete values inline (e.g. revenue fell from X to Y (-Z%)).
-4. When results include a statistical_test outcome, quote its plain-language
+4. Reference concrete values inline (e.g. revenue fell from X to Y (-Z%)).
+5. When results include a statistical_test outcome, quote its plain-language
    'interpretation' sentence (group-percentage differences, significance) rather than
    bare coefficients; mention p<0.05 significance explicitly when available.
-5. When a result involves binary flags or two-class comparisons, express findings as
+6. When a result involves binary flags or two-class comparisons, express findings as
    explicit group differences ("Class 1 averages X% lower than Class 0") instead of
    abstract correlation values. NEVER imply causation from association.
-6. Keep it under ~180 words unless the data demands more.
-7. Markdown allowed (bold, short bullet lists). No headers above ###.
+7. Keep it under ~180 words unless the data demands more.
+8. Markdown allowed (bold, short bullet lists). No headers above ###.
+9. Reference ONLY figures listed under 'Rendered figures'. Never mention a
+   chart type or title that is not in that list (no phantom pies, no planned-
+   but-pruned visuals). If the list is empty, describe findings without
+   referring to any visual.
 """
 
 
@@ -170,12 +182,18 @@ def build_explainer_messages(
     tables_markdown: str,
     calculations_text: str,
     warnings_text: str,
+    figures_text: str = "",
 ):
     content = (
         f"User question: {question}\n\n"
         f"Plan objective: {objective}\n\n"
         f"Execution results:\n{tables_markdown}\n\n"
         f"Key computed values:\n{calculations_text}\n\n"
+    )
+    content += (
+        "Rendered figures (the ONLY charts you may reference):\n"
+        + (figures_text if figures_text.strip() else "(none)")
+        + "\n\n"
     )
     if warnings_text:
         content += f"Validator warnings to acknowledge if relevant:\n{warnings_text}\n\n"

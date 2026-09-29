@@ -6,19 +6,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY insight/ ./insight/
-COPY webapp/ ./webapp/
-COPY tests/ ./tests/
-COPY pytest.ini ./
-COPY assets/ ./assets/
-COPY main.py ui_components.py utils.py style.css README.md HOW_TO_RUN.md ./
-
+# Create unprivileged user and pre-create runtime artifacts directory
 RUN useradd --create-home --shell /bin/bash insight \
     && mkdir -p /app/.artifacts \
     && chown -R insight:insight /app
+
+# Install dependencies (cached layer)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application files with ownership to avoid duplicate layer overhead
+COPY --chown=insight:insight insight/ ./insight/
+COPY --chown=insight:insight webapp/ ./webapp/
+COPY --chown=insight:insight tests/ ./tests/
+COPY --chown=insight:insight pytest.ini ./
+COPY --chown=insight:insight assets/ ./assets/
+COPY --chown=insight:insight main.py ui_components.py utils.py style.css README.md HOW_TO_RUN.md ./
+
 USER insight
 
 EXPOSE 8000

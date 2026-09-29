@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 import numpy as np
@@ -24,8 +25,6 @@ def _safe_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
 
-
-import re
 
 _ID_NAME_PATTERN = re.compile(
     r"(?:^|_)(id|ids|key|keys|code|uuid|guid|sku|ref|no|num|number)(?:$|_)", re.I
@@ -126,6 +125,19 @@ def _coerce_scalar(v: Any) -> str | int | float | bool:
     return str(v)
 
 
+_ARTIFACT_NAME = re.compile(r"^(unnamed:?\s*\d+|index|level_\d+)$", re.IGNORECASE)
+
+
+def is_artifact_column(name: str, series: pd.Series) -> bool:
+    """Index/position columns (e.g. Excel's 'Unnamed: 0') carry no signal."""
+    label = str(name).strip()
+    if _ARTIFACT_NAME.match(label):
+        return True
+    if label.lower().startswith("unnamed") and pd.api.types.is_numeric_dtype(series):
+        return True
+    return False
+
+
 def profile_dataframe(
     df: pd.DataFrame,
     name: str,
@@ -140,15 +152,18 @@ def profile_dataframe(
                 df[col] = parsed
 
     row_count = len(df)
-    columns = [profile_column(df, c, row_count) for c in df.columns]
+    artifacts = [str(c) for c in df.columns if is_artifact_column(c, df[c])]
+    profiled = [c for c in df.columns if not is_artifact_column(c, df[c])]
+    columns = [profile_column(df, c, row_count) for c in profiled]
 
     return DatasetProfile(
         name=name,
         row_count=row_count,
-        column_count=len(df.columns),
+        column_count=len(profiled),
         missing_cells=int(df.isna().sum().sum()),
         duplicate_rows=int(df.duplicated().sum()),
         memory_mb=round(float(df.memory_usage(deep=True).sum()) / 1_048_576, 3),
         columns=columns,
+        artifact_columns=artifacts,
         fingerprint=build_fingerprint(df, content_hash),
     )

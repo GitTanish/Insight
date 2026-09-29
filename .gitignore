@@ -1,14 +1,69 @@
-.env
-.venv
-__pycache__
-*.pyc
+# Bytecode & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 
-# Ignore agent generated plots
+# Environments & secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Streamlit secrets & local config
+.streamlit/secrets.toml
+
+# Tooling, test & lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
+
+# Build & packaging
+build/
+dist/
+*.egg-info/
+*.egg
+eggs/
+.eggs/
+
+# IDE & editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter notebooks
+.ipynb_checkpoints
+
+# Logs & temporary files
+*.log
+temp/
+tmp/
 temp_plot_*.png
 
-# Insight v2 artifacts
+# Insight artifacts & local outputs
 .artifacts/
-.pytest_cache/
 
-# Eval datasets are generated (generate_datasets.py + diamonds fetch)
+# Local data & databases
+data/
 evaluation/data/
+*.duckdb
+*.sqlite3
+*.db

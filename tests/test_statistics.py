@@ -450,3 +450,35 @@ def test_group_aggregate_no_gap_no_calc():
         step_id=0,
     )
     assert not any(c.label.startswith("excluded_missing_") for c in out.calculations)
+
+
+def test_value_counts_normalize_excludes_missing_and_sums_to_one():
+    df = pd.DataFrame({
+        "gender": ["M", "F", "M", None, None, "X", "M"],
+    })
+    out = OPERATIONS["value_counts"].run(
+        df,
+        OPERATIONS["value_counts"].params_model(column="gender", normalize=True),
+        step_id=0,
+    )
+    table = out.table.to_dataframe()
+    props = [float(p) for p in table["proportion"]]
+    assert abs(sum(props) - 1.0) < 1e-6, f"proportions must sum to 1, got {sum(props)}"
+
+    labels = {c.label: c.value for c in out.calculations}
+    assert labels["proportion_base"] == 5
+    assert labels["excluded_missing"] == 2
+    counts = dict(zip(table["gender"], [int(c) for c in table["count"]]))
+    assert abs(props[list(table['gender']).index('M')] - counts["M"] / 5) < 1e-6
+    assert "missing" in (out.notes or "")
+
+
+def test_value_counts_no_normalize_no_proportion_calcs():
+    df = pd.DataFrame({"g": ["a", "b"]})
+    out = OPERATIONS["value_counts"].run(
+        df,
+        OPERATIONS["value_counts"].params_model(column="g"),
+        step_id=0,
+    )
+    labels = {c.label for c in out.calculations}
+    assert "proportion_base" not in labels and "excluded_missing" not in labels

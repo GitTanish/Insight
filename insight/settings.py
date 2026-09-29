@@ -45,6 +45,18 @@ class Settings(BaseModel):
     planner_max_tokens: int = 3000
     explainer_max_tokens: int = 1500
     max_repair_attempts: int = 1
+    require_user_key: bool = Field(
+        default_factory=lambda: os.getenv("INSIGHT_REQUIRE_USER_KEY", "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
+    answer_grounded_check: bool = Field(
+        default_factory=lambda: os.getenv("INSIGHT_ANSWER_GROUNDING", "on")
+        .strip()
+        .lower()
+        not in {"0", "off", "false", "no"}
+    )
     sql_enabled: bool = Field(
         default_factory=lambda: os.getenv("INSIGHT_SQL", "on").strip().lower()
         not in {"0", "off", "false", "no"}
@@ -87,6 +99,12 @@ class Settings(BaseModel):
     )
     custom_name: str = Field(
         default_factory=lambda: os.getenv("INSIGHT_CUSTOM_NAME", "custom")
+    )
+    custom_discovery: bool = Field(
+        default_factory=lambda: os.getenv("INSIGHT_CUSTOM_DISCOVERY", "on")
+        .strip()
+        .lower()
+        not in {"0", "off", "false", "no"}
     )
     langsmith_api_key: str | None = Field(
         default_factory=lambda: os.getenv("LANGSMITH_API_KEY")

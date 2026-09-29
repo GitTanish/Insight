@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from insight.analytics.sql_engine import sanitize_table_name
 from insight.domain.dataset import DatasetProfile
 from insight.profiling.profiler import profile_dataframe
 from insight.settings import get_settings
@@ -39,6 +40,58 @@ def parse_csv_content(content: bytes) -> tuple[pd.DataFrame | None, str | None]:
             except Exception as exc:
                 last_error = f"{encoding}/{delimiter!r}: {exc}"
     return None, f"Could not parse CSV. Last attempt — {last_error}"
+
+
+EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
+
+
+def parse_tables(
+    filename: str, content: bytes
+) -> tuple[dict[str, pd.DataFrame] | None, str | None]:
+    """Parse an upload into named tables.
+
+    CSVs yield a single table; Excel workbooks yield one table per non-empty
+    sheet so the DuckDB layer can join across sheets. Returns
+    ({table_name: dataframe}, None) or (None, error).
+    """
+    from pathlib import Path as _Path
+
+    settings = get_settings()
+    suffix = _Path(filename or "").suffix.lower()
+
+    frames: dict[str, pd.DataFrame] = {}
+    if suffix in EXCEL_EXTENSIONS:
+        try:
+            workbook = pd.read_excel(io.BytesIO(content), sheet_name=None)
+        except Exception as exc:
+            return None, f"Could not parse Excel file: {exc}"
+        stem = sanitize_table_name(_Path(filename).stem)
+        seen: set[str] = set()
+        for sheet_name, df in workbook.items():
+            if df is None or df.empty or len(df.columns) == 0:
+                continue
+            base = sanitize_table_name(f"{stem}_{sheet_name}")
+            candidate, n = base, 2
+            while candidate in seen:
+                candidate = f"{base}_{n}"
+                n += 1
+            seen.add(candidate)
+            frames[candidate] = df
+        if not frames:
+            return None, "Workbook contains no readable sheets."
+    else:
+        df, err = parse_csv_content(content)
+        if df is None:
+            return None, err
+        frames[sanitize_table_name(_Path(filename).stem)] = df
+
+    for name, df in frames.items():
+        if len(df) > settings.max_upload_rows:
+            return None, (
+                f"Table '{name}' has {len(df):,} rows "
+                f"(max {settings.max_upload_rows:,})"
+            )
+    return frames, None
 
 
 def profile_from_content(content: bytes, name: str) -> DatasetProfile | None:

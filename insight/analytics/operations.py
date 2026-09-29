@@ -476,7 +476,9 @@ class ValueCountsOp(ValueCountsParams):
         if params.column not in df.columns:
             raise OperationError(f"unknown column '{params.column}'")
         work = apply_filters(df, params.filters)
-        counts = work[params.column].value_counts()
+        raw_series = work[params.column]
+        valid_total = int(raw_series.notna().sum())
+        counts = raw_series.value_counts()
 
         other_note = None
         if params.other_after is not None and len(counts) > params.other_after:
@@ -491,14 +493,41 @@ class ValueCountsOp(ValueCountsParams):
              "count": [int(c) for c in counts.values]}
         )
         if params.normalize:
-            total = int(len(work))
-            table["proportion"] = [round(c / total, 4) if total else 0.0 for c in counts.values]
+            table["proportion"] = [
+                round(c / valid_total, 4) if valid_total else 0.0 for c in counts.values
+            ]
+        missing_rows = int(len(work) - valid_total)
         calc = Calculation(
             label="distinct values",
-            value=int(work[params.column].nunique()),
-            detail=other_note or f"showing top {len(table)} of {work[params.column].nunique()}",
+            value=int(raw_series.nunique()),
+            detail=other_note or f"showing top {len(table)} of {raw_series.nunique()}",
         )
-        return OperationOutput(table=make_table(step_id, "counts", table), calculations=[calc])
+        calcs = [calc]
+        if params.normalize:
+            calcs.append(
+                Calculation(
+                    label="proportion_base",
+                    value=valid_total,
+                    detail="non-null rows; proportions exclude missing values and sum to 1",
+                )
+            )
+        if missing_rows:
+            calcs.append(
+                Calculation(
+                    label="excluded_missing",
+                    value=missing_rows,
+                    detail=f"{missing_rows / len(work):.1%} of rows have no '{params.column}' value",
+                )
+            )
+            notes_text = (
+                f"counts exclude {missing_rows:,} row(s) with missing "
+                f"'{params.column}' (of {len(work):,} total)."
+            )
+        else:
+            notes_text = None
+        return OperationOutput(
+            table=make_table(step_id, "counts", table), calculations=calcs, notes=notes_text
+        )
 
 
 class TopNParams(BaseModel):
@@ -1426,16 +1455,19 @@ def validate_plan_columns(
             )
             continue
 
+        opaque_input = False
         if step.input_step is not None:
             if step.input_step == step.step_id:
                 issues.append(
                     f"step {step.step_id}: input_step cannot reference itself"
                 )
+                continue
             elif step.input_step not in {s.step_id for s in plan.steps}:
                 issues.append(
                     f"step {step.step_id}: input_step references unknown "
                     f"step {step.input_step}"
                 )
+                continue
             else:
                 target = next(
                     (s for s in plan.steps if s.step_id == step.input_step), None
@@ -1450,12 +1482,20 @@ def validate_plan_columns(
                         f"step {step.step_id}: input_step target ({target.operation}) "
                         f"produces no table; choose one of {sorted(TABLE_PRODUCING_OPS)}"
                     )
+                if (
+                    target is not None
+                    and target.operation == "sql_query"
+                    and plan.steps.index(target) < plan.steps.index(step)
+                ):
+                    opaque_input = True
 
         def check_filters(filters: Any) -> None:
             if not isinstance(filters, list):
                 return
             for entry in filters:
                 if not isinstance(entry, dict) or "column" not in entry:
+                    continue
+                if opaque_input:
                     continue
                 canonical = canonical_or_issue(
                     f"step {step.step_id} filter", entry["column"]
@@ -1464,7 +1504,7 @@ def validate_plan_columns(
                     entry["column"] = canonical
 
         for field_name in ref_fields:
-            if field_name not in params or params[field_name] is None:
+            if field_name not in params or params[field_name] is None or opaque_input:
                 continue
             raw = params[field_name]
             label = f"step {step.step_id} '{field_name}'"
@@ -1483,7 +1523,7 @@ def validate_plan_columns(
             if key == "filters" or key.startswith("subset_"):
                 check_filters(value)
 
-        if step.operation == "group_aggregate":
+        if step.operation == "group_aggregate" and not opaque_input:
             metrics = params.get("metrics")
             if isinstance(metrics, list):
                 for i, metric in enumerate(metrics):
@@ -1498,7 +1538,7 @@ def validate_plan_columns(
                         if canonical:
                             metric["column"] = canonical
 
-        if step.operation == "compare_subsets":
+        if step.operation == "compare_subsets" and not opaque_input:
             metric = params.get("metric")
             if isinstance(metric, dict) and str(metric.get("agg", "")) != "count":
                 canonical = canonical_or_issue(

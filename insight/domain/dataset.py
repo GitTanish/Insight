@@ -77,6 +77,7 @@ class DatasetProfile(BaseModel):
     memory_mb: float
     columns: list[ColumnProfile]
     fingerprint: DatasetFingerprint
+    artifact_columns: list[str] = Field(default_factory=list)
 
     def column_names(self) -> list[str]:
         return [c.name for c in self.columns]

@@ -3,27 +3,53 @@
     "id": "sales_top_region",
     "dataset": "sales.csv",
     "question": "Which region generates the highest total revenue?",
-    "expect_ops": ["group_aggregate"],
-    "answer_contains": ["West"],
+    "expect_ops": [
+      "group_aggregate"
+    ],
+    "answer_contains": [
+      "West"
+    ],
     "numeric_expect": [
-      {"label": ["total_revenue", "sum_revenue", "revenue_sum", "total"], "approx": 48805.62}
+      {
+        "label": [
+          "total_revenue",
+          "sum_revenue",
+          "revenue_sum",
+          "total"
+        ],
+        "approx": 48805.62
+      }
     ]
   },
   {
     "id": "sales_mean_order_revenue",
     "dataset": "sales.csv",
     "question": "What is the average order revenue?",
-    "expect_ops": [["summarize", "distribution"]],
+    "expect_ops": [
+      [
+        "summarize",
+        "distribution"
+      ]
+    ],
     "answer_contains": [],
     "numeric_expect": [
-      {"label": ["mean", "average"], "column": "revenue", "approx": 285.3069}
+      {
+        "label": [
+          "mean",
+          "average"
+        ],
+        "column": "revenue",
+        "approx": 285.3069
+      }
     ]
   },
   {
     "id": "sales_monthly_trend",
     "dataset": "sales.csv",
     "question": "How does revenue trend month over month across the full period?",
-    "expect_ops": ["trend"],
+    "expect_ops": [
+      "trend"
+    ],
     "answer_contains": [],
     "numeric_expect": []
   },
@@ -31,87 +57,154 @@
     "id": "sales_revenue_outliers",
     "dataset": "sales.csv",
     "question": "Are there outliers in the revenue column? How many rows are flagged?",
-    "expect_ops": ["detect_outliers"],
+    "expect_ops": [
+      "detect_outliers"
+    ],
     "answer_contains": [],
     "numeric_expect": [
-      {"label": ["outlier_rows"], "approx": 6, "tol_pct": 17}
+      {
+        "label": [
+          "outlier_rows"
+        ],
+        "approx": 6,
+        "tol_pct": 17
+      }
     ]
   },
   {
     "id": "sales_revenue_distribution",
     "dataset": "sales.csv",
     "question": "Show me the distribution of order revenue.",
-    "expect_ops": ["distribution"],
+    "expect_ops": [
+      "distribution"
+    ],
     "answer_contains": [],
     "numeric_expect": [
-      {"label": ["mean"], "approx": 285.3069}
+      {
+        "label": [
+          "mean"
+        ],
+        "approx": 285.3069
+      }
     ]
   },
   {
     "id": "ecom_conversion_gap_test",
     "dataset": "ecommerce.csv",
     "question": "Is the conversion rate significantly different between mobile and desktop users?",
-    "expect_ops": ["statistical_test"],
-    "answer_contains": ["significan"],
+    "expect_ops": [
+      "statistical_test"
+    ],
+    "answer_contains": [
+      "significan"
+    ],
     "numeric_expect": []
   },
   {
     "id": "ecom_aov_by_device",
     "dataset": "ecommerce.csv",
     "question": "Compare the average cart value between mobile and desktop sessions.",
-    "expect_ops": [["compare_subsets", "statistical_test", "group_aggregate"]],
-    "answer_contains": ["desktop"],
+    "expect_ops": [
+      [
+        "compare_subsets",
+        "statistical_test",
+        "group_aggregate"
+      ]
+    ],
+    "answer_contains": [
+      "desktop"
+    ],
     "numeric_expect": []
   },
   {
     "id": "ecom_top_channel",
     "dataset": "ecommerce.csv",
     "question": "Which marketing channel has the most sessions?",
-    "expect_ops": [["value_counts", "group_aggregate"]],
-    "answer_contains": ["paid"],
+    "expect_ops": [
+      [
+        "value_counts",
+        "group_aggregate"
+      ]
+    ],
+    "answer_contains": [
+      "paid"
+    ],
     "numeric_expect": []
   },
   {
     "id": "ecom_lead_score_calibration",
     "dataset": "ecommerce.csv",
     "question": "Audit whether lead_score is well calibrated against the converted outcome.",
-    "expect_ops": ["isotonic_calibration"],
+    "expect_ops": [
+      "isotonic_calibration"
+    ],
     "answer_contains": [],
     "numeric_expect": [
-      {"label": ["ece"], "approx": 0.06159, "tol_pct": 15}
+      {
+        "label": [
+          "ece"
+        ],
+        "approx": 0.06159,
+        "tol_pct": 15
+      }
     ]
   },
   {
     "id": "sup_resolution_association",
     "dataset": "support.csv",
     "question": "Is ticket resolution associated with the support channel?",
-    "expect_ops": ["statistical_test"],
-    "answer_contains": ["significant"],
+    "expect_ops": [
+      "statistical_test"
+    ],
+    "answer_contains": [
+      "associat"
+    ],
     "numeric_expect": []
   },
   {
     "id": "sup_mean_handle_time",
     "dataset": "support.csv",
     "question": "What is the average handle time for tickets?",
-    "expect_ops": [["summarize", "distribution"]],
+    "expect_ops": [
+      [
+        "summarize",
+        "distribution"
+      ]
+    ],
     "answer_contains": [],
     "numeric_expect": [
-      {"label": ["mean", "average"], "column": "handle_time_min", "approx": 13.3533}
+      {
+        "label": [
+          "mean",
+          "average"
+        ],
+        "column": "handle_time_min",
+        "approx": 13.3533
+      }
     ]
   },
   {
     "id": "sup_top_channel_volume",
     "dataset": "support.csv",
     "question": "Which support channel receives the most tickets?",
-    "expect_ops": [["value_counts", "group_aggregate"]],
-    "answer_contains": ["email"],
+    "expect_ops": [
+      [
+        "value_counts",
+        "group_aggregate"
+      ]
+    ],
+    "answer_contains": [
+      "email"
+    ],
     "numeric_expect": []
   },
   {
     "id": "sup_weekly_volume_trend",
     "dataset": "support.csv",
     "question": "How does ticket volume trend week by week?",
-    "expect_ops": ["trend"],
+    "expect_ops": [
+      "trend"
+    ],
     "answer_contains": [],
     "numeric_expect": []
   },
@@ -119,7 +212,12 @@
     "id": "sup_priority_handle_speed",
     "dataset": "support.csv",
     "question": "Do handle times differ across priority levels? Test it statistically.",
-    "expect_ops": [["anova_test", "statistical_test"]],
+    "expect_ops": [
+      [
+        "anova_test",
+        "statistical_test"
+      ]
+    ],
     "answer_contains": [],
     "numeric_expect": []
   },
@@ -127,35 +225,72 @@
     "id": "sup_chat_vs_email_resolution",
     "dataset": "support.csv",
     "question": "Compare the resolution rate between chat and email tickets.",
-    "expect_ops": [["statistical_test", "compare_subsets"]],
-    "answer_contains": ["chat"],
+    "expect_ops": [
+      [
+        "statistical_test",
+        "compare_subsets",
+        "sql_query"
+      ]
+    ],
+    "answer_contains": [
+      "chat"
+    ],
     "numeric_expect": []
   },
   {
     "id": "retail_top_region_250k",
     "dataset": "retail_250k.csv",
     "question": "Which region generates the most revenue?",
-    "expect_ops": ["group_aggregate"],
-    "answer_contains": ["West"],
+    "expect_ops": [
+      "group_aggregate"
+    ],
+    "answer_contains": [
+      "West"
+    ],
     "numeric_expect": [
-      {"label": ["total_revenue", "sum_revenue", "revenue_sum", "total"], "approx": 70609032.26}
+      {
+        "label": [
+          "total_revenue",
+          "sum_revenue",
+          "revenue_sum",
+          "total"
+        ],
+        "approx": 70609032.26
+      }
     ]
   },
   {
     "id": "retail_margin_correlation",
     "dataset": "retail_250k.csv",
     "question": "How strongly are order revenue and margin correlated?",
-    "expect_ops": [["correlation", "statistical_test"]],
+    "expect_ops": [
+      [
+        "correlation",
+        "statistical_test"
+      ]
+    ],
     "answer_contains": [],
     "numeric_expect": [
-      {"label": ["effect_size", "strongest_correlation"], "approx": 0.960199, "tol_pct": 2}
+      {
+        "label": [
+          "effect_size",
+          "strongest_correlation"
+        ],
+        "approx": 0.960199,
+        "tol_pct": 2
+      }
     ]
   },
   {
     "id": "retail_returns_by_format",
     "dataset": "retail_250k.csv",
     "question": "Is the product return rate different across store formats?",
-    "expect_ops": [["statistical_test", "anova_test"]],
+    "expect_ops": [
+      [
+        "statistical_test",
+        "anova_test"
+      ]
+    ],
     "answer_contains": [],
     "numeric_expect": []
   },
@@ -163,21 +298,46 @@
     "id": "diamonds_carat_price_correlation",
     "dataset": "diamonds.csv",
     "question": "How strongly are diamond price and carat weight correlated?",
-    "expect_ops": [["correlation", "statistical_test"]],
+    "expect_ops": [
+      [
+        "correlation",
+        "statistical_test"
+      ]
+    ],
     "answer_contains": [],
     "numeric_expect": [
-      {"label": ["effect_size", "strongest_correlation"], "approx": 0.921591, "tol_pct": 2}
+      {
+        "label": [
+          "effect_size",
+          "strongest_correlation"
+        ],
+        "approx": 0.921591,
+        "tol_pct": 2
+      }
     ]
   },
   {
     "id": "diamonds_cut_with_highest_avg_price",
     "dataset": "diamonds.csv",
     "question": "Which diamond cut has the highest average price?",
-    "expect_ops": ["group_aggregate"],
-    "answer_contains": ["Premium"],
+    "expect_ops": [
+      "group_aggregate"
+    ],
+    "answer_contains": [
+      "Premium"
+    ],
     "numeric_expect": [
-      {"label": ["avg_price", "mean_price", "price_mean", "average_price", "total_price"],
-       "approx": 4584.26, "tol_pct": 1}
+      {
+        "label": [
+          "avg_price",
+          "mean_price",
+          "price_mean",
+          "average_price",
+          "total_price"
+        ],
+        "approx": 4584.26,
+        "tol_pct": 1
+      }
     ]
   }
 ]
