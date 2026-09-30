@@ -96,7 +96,7 @@ With `INSIGHT_PLAN_APPROVAL=on` the pipeline inserts a human gate between the pl
 
 | Generated Charts | Exported Report |
 |---|---|
-| ![Charts](image/4.png) | ![Report](image/download%20report%20demonstration.png) |
+| ![Charts](image/4.png) | ![Report](image/download-report-demo.png) |
 
 ---
 
@@ -170,6 +170,15 @@ streamlit run main.py
 ```
 
 Both front-ends share the same `insight/` engine.
+
+**Alternative — Docker:**
+
+```bash
+docker build -t insight .
+docker run -p 8000:8000 --env-file .env insight
+```
+
+No local Python or virtualenv needed. The image runs unprivileged as a non-root user, binds to `0.0.0.0:8000`, and ships a `/healthz` healthcheck. Keys stay outside the image — they're read from `--env-file` at runtime.
 
 ### 5. Run the test suite (optional but encouraged)
 
@@ -314,9 +323,13 @@ Every statistical claim above is a textbook method executed by deterministic cod
 
 **LLM reliability patterns** — the planner-emits-plan / engine-computes split follows program-aided language models (Gao et al., *PAL*, ICML 2023); bounded plan-repair mirrors iterative self-refinement (Madaan et al., *Self-Refine*, NeurIPS 2023); independent recomputation of every headline number is an application of chain-of-verification ideas (Dhuliawala et al., 2023).
 
-## Security note
+## Security & privacy
 
-Your CSV contents are sent to the configured LLM provider as context. The LLM **never executes code**: all computation happens through a fixed library of pandas operations inside your own process. Don't upload datasets containing sensitive personal information you wouldn't paste into a chat model.
+- **No arbitrary code execution:** the LLM does not generate or execute arbitrary Python code. All operations route through a fixed library of audited pandas/scipy functions or a strictly sandboxed, read-only embedded DuckDB engine — everything executes inside your own process.
+- **Context protection:** full tabular datasets are never dumped into the LLM context window. The provider receives only schema definitions, statistical fingerprints (column types, cardinality, missingness, sampled summaries), and the small set of computed aggregate values a given answer actually cites.
+- **Sanitized SQL:** DuckDB queries are accepted only as a single read-only `SELECT`/`WITH` statement. Destructive and administrative keywords (`ATTACH`, `COPY`, `DROP`, `PRAGMA`, …) are rejected, the connection runs in-memory with external access disabled and configuration locked, results are row-capped, and a hard 10-second interrupt aborts runaway queries.
+
+Still, aggregates and schemas leave your machine: whatever you ask, the numbers behind the answer are sent to your configured provider. Don't upload datasets whose derived statistics you wouldn't paste into a chat model.
 
 ---
 
