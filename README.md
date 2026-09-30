@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-teal.svg)](https://fastapi.tiangolo.com)
 [![Pydantic](https://img.shields.io/badge/pydantic-v2-green.svg)](https://docs.pydantic.dev)
-[![Tests](https://img.shields.io/badge/tests-215%20passing-brightgreen.svg)](#5-run-the-test-suite-optional-but-encouraged)
+[![Tests](https://img.shields.io/badge/tests-CI%20green-brightgreen.svg)](#5-run-the-test-suite-optional-but-encouraged)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Upload a CSV — or drop four related ones. Ask anything in plain English. Get verified answers, newspaper-styled charts, a formatted Word report, and production-ready dbt/alert exports.
@@ -26,7 +26,7 @@ Measured on this repo during development — not aspirational numbers:
 | Engine answered diamonds' top cut as **Premium ($4,584 avg)** where LLM priors say *Ideal* | computed evidence beats model priors |
 | **8/8 malicious SQL patterns blocked** (`DROP`, `COPY TO`, `ATTACH`, `PRAGMA`, chained statements…) + hard **10s interrupt** on runaway queries | read-only relational analytics you can hand to an LLM |
 | **16-question real-world battery** (54K-row diamonds + a messy 4-sheet clinical workbook with case-mismatched join keys) logged in [evaluation/REAL_WORLD_LOG.md](evaluation/REAL_WORLD_LOG.md), each answer cross-checked against independent pandas/scipy ground truth | survives data the way it actually arrives |
-| **215 offline tests**, CI-green with zero API keys, every headline number independently recomputed through a second arithmetic path — and every number in the *narrative* traced back to computed evidence | verified by construction |
+| **Full offline suite green in CI** with zero API keys, every headline number independently recomputed through a second arithmetic path — and every number in the *narrative* traced back to computed evidence | verified by construction |
 
 ---
 
@@ -186,7 +186,7 @@ No local Python or virtualenv needed. The image runs unprivileged as a non-root 
 pytest
 ```
 
-215 unit/integration tests cover the profiler, every analytics operation (including statistical routing), the DAG executor, the validator + independent recomputation layer, planner repair loops, chart rendering rules, the briefing engine, conversation state, the query cache, text streaming, plan approval, prompt-cache stability, and the FastAPI webapp end-to-end — all via a scripted fake LLM, no API key needed. CI generates the deterministic eval datasets before running (`python evaluation/generate_datasets.py`); one further test runs when the optional `diamonds.csv` corpus is present. A separate `eval`-marked live suite (`INSIGHT_RUN_EVAL=1 pytest -m eval`) exercises the golden-question harness against a real provider.
+The offline unit/integration suite covers the profiler, every analytics operation (including statistical routing), the DAG executor, the validator + independent recomputation layer, planner repair loops, chart rendering rules, the briefing engine, conversation state, the query cache, text streaming, plan approval, prompt-cache stability, and the FastAPI webapp end-to-end — all via a scripted fake LLM, no API key needed. It runs green in CI on every push. CI generates the deterministic eval datasets first (`python evaluation/generate_datasets.py`); a handful of tests additionally exercise the optional third-party `diamonds.csv` corpus when it is present, so the exact pass/skip split varies by platform and by which corpora you have. A separate `eval`-marked live suite (`INSIGHT_RUN_EVAL=1 pytest -m eval`) exercises the golden-question harness against a real provider.
 
 ### Evaluation harness (optional)
 

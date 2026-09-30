@@ -107,7 +107,8 @@ curl -X POST http://localhost:8000/api/query \
 pytest
 ```
 
-215 offline tests via scripted fake LLMs. A separate live eval suite runs only
+The full offline suite via scripted fake LLMs — no API key needed, and green in CI.
+A separate live eval suite runs only
 with `INSIGHT_RUN_EVAL=1 pytest -m eval` (needs a provider key):
 
 ```bash
