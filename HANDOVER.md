@@ -1,6 +1,6 @@
 # INSIGHT — Session Handover
 
-> Last updated: 2026-09-29 · Engine v2.2.0-alpha · **214 offline tests passing** · **20/20 live eval cases** · Python 3.11 venv at `.venv`
+> Last updated: 2026-09-29 · Engine v2.2.0-alpha · **215 offline tests passing** · **20/20 live eval cases** · Python 3.11 venv at `.venv`
 
 ---
 
@@ -43,7 +43,7 @@ Two front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `weba
 | `insight/settings.py` | all config via env; `.env` auto-loaded |
 | `webapp/` | FastAPI: `app.py` routes, `sessions.py` cookie store, `services.py` streamlit-free IO, Jinja `templates/`, `static/` (CSS + app.js SSE client w/ typing bubble + plan review) |
 | `ui_components.py` / `utils.py` / `main.py` | Streamlit legacy UI (same engine via cached wrappers) |
-| `tests/` | **214 tests**, offline (fake providers / scripted chains). Key fixtures in `conftest.py` |
+| `tests/` | **215 tests**, offline (fake providers / scripted chains). Key fixtures in `conftest.py` |
 
 ---
 
@@ -59,7 +59,7 @@ uvicorn webapp.app:app --port 8000        # → http://localhost:8000
 streamlit run main.py                      # → :8501
 
 # tests (no network / no keys needed — tracing force-off in conftest)
-pytest -q                                  # 214 passed expected (~30-70s on Windows)
+pytest -q                                  # 215 passed expected (~30-70s on Windows)
 
 # headless API
 curl -X POST localhost:8000/api/query -H "Content-Type: application/json" \
@@ -202,7 +202,7 @@ Container/subprocess sandboxing (no codegen exists), FastAPI auth/multi-user, PD
 ## 8. Quick sanity checklist after any change
 
 ```bash
-pytest -q                     # expect 214 passed, 1 skipped
+pytest -q                     # expect 215 passed, 2 skipped (216/1 with the optional diamonds corpus)
 uvicorn webapp.app:app --port 8000   # boot, upload any CSV, run one query, check SSE stages + View plan
 python evaluation/run_eval.py --model groq/openai/gpt-oss-120b   # golden-question benchmark
 ```

@@ -10,6 +10,11 @@ from evaluation.run_eval import _numeric_found, load_cases, score_case
 EVAL_DIR = Path(__file__).resolve().parent.parent / "evaluation"
 DATA_DIR = EVAL_DIR / "data"
 
+# Datasets reproducible by evaluation/generate_datasets.py (deterministic, SEED=20260822).
+GENERATED_DATASETS = {"sales.csv", "ecommerce.csv", "support.csv", "retail_250k.csv"}
+# Third-party corpora that must be downloaded manually; absent on a fresh clone and in CI.
+EXTERNAL_DATASETS = {"diamonds.csv"}
+
 
 class _StubTable:
     def __init__(self, columns, rows):
@@ -26,22 +31,42 @@ class _StubResponse:
         self.error = error
 
 
-def test_cases_file_is_valid_and_datasets_exist():
+def test_cases_file_is_wellformed():
     cases = load_cases(EVAL_DIR / "cases.json")
     assert len(cases) >= 15
     ids = [c["id"] for c in cases]
     assert len(ids) == len(set(ids))
     for case in cases:
-        csv_path = DATA_DIR / case["dataset"]
-        assert csv_path.exists(), f"missing dataset {case['dataset']}"
-        df = pd.read_csv(csv_path)
         assert case["question"].strip()
         for spec in case.get("numeric_expect", []):
             assert "label" in spec and "approx" in spec
-        assert len(df) > 100
+
+
+def test_generated_datasets_exist_and_are_large_enough():
+    if not (DATA_DIR / "ground_truth.json").exists():
+        pytest.skip("run `python evaluation/generate_datasets.py` to materialize eval datasets")
+    cases = load_cases(EVAL_DIR / "cases.json")
+    referenced = {c["dataset"] for c in cases}
+    assert referenced <= GENERATED_DATASETS | EXTERNAL_DATASETS, (
+        f"cases.json references unknown datasets: {sorted(referenced - GENERATED_DATASETS - EXTERNAL_DATASETS)}"
+    )
+    for filename in sorted(referenced & GENERATED_DATASETS):
+        csv_path = DATA_DIR / filename
+        assert csv_path.exists(), f"missing dataset {filename}"
+        assert len(pd.read_csv(csv_path)) > 100
+
+
+@pytest.mark.parametrize("filename", sorted(EXTERNAL_DATASETS))
+def test_external_datasets_present(filename):
+    csv_path = DATA_DIR / filename
+    if not csv_path.exists():
+        pytest.skip(f"{filename} is a manual download; skipped when absent")
+    assert len(pd.read_csv(csv_path)) > 100
 
 
 def test_ground_truth_matches_baked_expectations():
+    if not (DATA_DIR / "ground_truth.json").exists():
+        pytest.skip("run `python evaluation/generate_datasets.py` to materialize ground truth")
     truth = json.loads((DATA_DIR / "ground_truth.json").read_text(encoding="utf-8"))
     sales = truth["sales.csv"]
     by_region = sales["revenue_by_region"]

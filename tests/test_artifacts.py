@@ -23,7 +23,7 @@ def test_dbt_model_contains_config_sql_and_yaml_tests():
     assert "GROUP BY region;" in files[sql_path]
 
     parsed = None
-    import yaml  # streamlit dependency; present in env
+    import yaml
 
     parsed = yaml.safe_load(files[yml_path])
     model = parsed["models"][0]

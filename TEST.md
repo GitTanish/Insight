@@ -204,7 +204,7 @@ The repository contains **25 test files** designed to execute completely offline
 | `test_profiler.py` | 67 | Column role inference and dataset fingerprinting | Relies on column names for identifier heuristic (`order_id`, `uuid`). |
 | `test_providers.py` | 167 | Provider URL construction, headers, retry backoff | Mocks HTTP client; does not hit real provider endpoints. |
 | `test_registry.py` | 111 | Model catalog, sorting, custom provider env mapping | Relies on static catalog definitions. |
-| `test_evaluation.py` | 141 | Scoring logic (`_numeric_close`, `_ops_satisfied`) | Tests test harness itself, not agent performance. |
+| `test_evaluation.py` | 133 | Scoring logic (`_numeric_close`, `_ops_satisfied`) | Tests test harness itself, not agent performance. Needs `evaluation/data/`, which is gitignored — CI regenerates it. |
 
 #### Local-Only Test Suites (Excluded from Git via `.gitignore`)
 * `tests/test_invariants.py`: Stresses all 14 analytics operations under 30% missing data and asserts grounding invariants.
@@ -346,7 +346,7 @@ pytest tests/test_operations.py tests/test_sql_engine.py tests/test_verification
 
 ### Core Regression Commands
 ```bash
-# Full offline test suite (214 unit & integration tests, tracing & query cache forced off)
+# Full offline test suite (215 unit & integration tests, tracing & query cache forced off)
 pytest -q
 
 # Run local invariants & robustness tests (if present locally)
@@ -363,5 +363,7 @@ python evaluation/run_eval.py --model groq/openai/gpt-oss-120b --limit 5
 4. **Deferred Features (Do Not Implement Unprompted)**: Python code-interpreter sandboxes (omitted by design; DuckDB covers analytics safely), multi-user authentication, and native PDF exports.
 
 ### Documentation Discrepancies
-* **Test Counts**: Resolved. `README.md`, `HOW_TO_RUN.md`, `HANDOVER.md` and this file all state **214 passing, 1 skipped**, matching `pytest -q`.
+* **Test Counts**: Environment-dependent by design. `README.md`, `HOW_TO_RUN.md`, `HANDOVER.md` and this file all state **215 offline tests**, matching `pytest -q` on a clone where `evaluation/data/` has been generated. The count is 216 passed / 1 skipped once the optional third-party `diamonds.csv` corpus is present, and 215 passed / 2 skipped without it. Do not treat a single absolute number as canonical — assert the pass/fail outcome instead.
+* **CI was silently red**: Until 2026-09-30 the GitHub Actions workflow had never passed. `evaluation/data/` is gitignored, so `tests/test_evaluation.py` failed on any fresh clone with `missing dataset sales.csv`; `pyyaml` was imported by `tests/test_artifacts.py` but never declared in `requirements.txt` (it was only present transitively via Streamlit). CI now runs `python evaluation/generate_datasets.py` before pytest, and PyYAML is a declared dependency. **Lesson: a test suite that only passes on the author's machine is not a safety net.** If CI is red, treat it as a code bug, not a flaky environment.
 * **Streamlit vs. WebApp**: `README.md` initially presented the Streamlit UI as primary. The primary production interface is now the FastAPI web application in `webapp/` (Uvicorn port 8000), with Streamlit maintained as a secondary interface.
+* **GitHub repo metadata**: The repository description claimed "Built with Streamlit, LangChain, and Groq API". LangChain was never a dependency (zero imports; only `langsmith` for tracing) and the LLM layer is hand-rolled over `httpx`. Corrected 2026-09-30.

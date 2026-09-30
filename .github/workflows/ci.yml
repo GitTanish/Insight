@@ -27,5 +27,8 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
 
+      - name: Generate evaluation datasets
+        run: python evaluation/generate_datasets.py
+
       - name: Test suite (offline, no API keys)
         run: pytest -q
