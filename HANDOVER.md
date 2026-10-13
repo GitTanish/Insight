@@ -33,6 +33,7 @@ Two front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `weba
 | `insight/profiling/profiler.py` | role inference (identifier-by-name heuristic!), missingness, fingerprint |
 | `insight/planning/` | `prompts.py` (hard rules incl. title/DAG/binary rules), `planner.py` (JSON repair loop) |
 | `insight/analytics/operations.py` | **the op registry** — 15 deterministic ops + `operation_catalog()` (auto-generates planner prompt) + `validate_plan_columns()` |
+| `insight/tools/` | **agentic tool-use layer** — `tooling.py` (registry→provider tool schemas), `runtime.py` (dispatch through the executor path), `loop.py` (bounded observe/plan/act/refine), `pipeline.py` (plan/execution rebuild + chart synthesis + meta). Gated by `INSIGHT_AGENTIC` / `AnalysisRequest.agentic` |
 | `insight/analytics/statistics.py` | scipy routing: group comparison / chi-square / correlation, effect sizes, plain-language interpretation |
 | `insight/briefing.py` | zero-prompt detectors: trend/corr/outliers/imbalance/missing/dupes → ranked findings |
 | `insight/execution/executor.py` | sequential executor; `frames` dict enables `input_step` DAG; filter_rows mutates implicit chain |
@@ -41,7 +42,7 @@ Two front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `weba
 | `insight/orchestrator.py` | `analyze_stream()` async generator (stage / delta / plan_review events) wrapped by `analyze()`; `run_analysis_sync()` for sync UIs. Owns cache, timing meta (`planning_ms`, `repair_ms`, `first_token_ms`, …) and the HITL gate |
 | `insight/observability.py` | LangSmith tracing (optional; `INSIGHT_TRACING=off` kills it) — root run + `trace_phase` spans |
 | `insight/settings.py` | all config via env; `.env` auto-loaded |
-| `webapp/` | FastAPI: `app.py` routes, `sessions.py` cookie store, `services.py` streamlit-free IO, Jinja `templates/`, `static/` (CSS + app.js SSE client w/ typing bubble + plan review) |
+| `webapp/` | FastAPI: `app.py` routes, `sessions.py` cookie store, `services.py` streamlit-free IO, Jinja `templates/`, `static/` (CSS + app.js SSE client w/ typing bubble + plan review + live agent tool trail) |
 | `ui_components.py` / `utils.py` / `main.py` | Streamlit legacy UI (same engine via cached wrappers) |
 | `tests/` | Offline suite, green in CI (fake providers / scripted chains). Key fixtures in `conftest.py`. Pass/skip split varies by platform and by which optional corpora are present — assert exit code, not count |
 
@@ -182,6 +183,40 @@ re-validates via `validate_plan_columns` rather than trusting the edit.
 execution is 14-62ms of a ~30s query (~0.2%), even on 250K rows. A native
 rewrite would save ~55ms. The LLM calls are 95%+ of latency. Documented in
 `future_scope.md` so it isn't re-litigated.
+
+### P8 — Agentic tool-use mode + alert-runner ✅
+**Agentic mode** (`INSIGHT_AGENTIC` / per-question toggle in both UIs): the LLM
+calls ops *as tools*, observes real results, iterates. `insight/tools/`:
+`tooling` (op params → provider tool schemas, `$defs` inlined, Anthropic +
+OpenAI shapes), `runtime.dispatch` (validates through `validate_plan_columns`
+then runs the same `OperationSpec.run`; chained calls skip profile
+canonicalization because derived columns only exist in the chained frame),
+`loop.run_loop` (bounded: `LoopBudget`, call delay, identical-failure abort,
+`input_step` DAG mirroring the executor's working/frames semantics, `on_event`
+for SSE), `pipeline` (rebuilds `AnalysisPlan`+`ExecutionResult` from the loop
+so the **same** tail runs: validate → independent recompute → charts →
+explainer → grounding). Anthropic provider now speaks tool_use/tool_result.
+`_Chain.generate` tolerates tool-call-only (empty-content) responses.
+Orchestrator: the shared tail was extracted to `_tail_events` — both modes
+call it; agentic skips the plan-repair loop (the loop *is* the repair).
+Streams `tool_call`/`tool_result` SSE events; `app.js` renders a live trail.
+Cache key includes the mode. Tests: `test_agentic_pipeline.py` (20),
+`test_webapp_agentic.py` (4).
+
+**Gotchas**: (1) the SSE drain must `yield await queue.get()` — yielding the
+bare coroutine never drains the queue and spins the generator forever.
+(2) Stub chains in tests lack `.entries` — the tool-shape check uses
+`getattr`. (3) `_FakeSettings` in `test_cache.py` needs an `agentic` field.
+(4) Agentic mode bypasses the HITL plan-approval gate by design — the tool
+trail *is* the live review; Stop aborts mid-loop.
+
+**Alert-runner** (`tools/alert_runner.py`, roadmap #5): cron → DuckDB →
+webhook worker for exported monitors. Reuses `DuckSession` (same sandbox:
+statement validation, keyword guards, interrupt watchdog, row cap).
+State-change alerting (post on trigger edge, `--notify-recovery`,
+`--repeat`), `--dry-run`, `--once`, `--max-runs`, `--monitor <name>` filter,
+`--webhook` override, URL from the monitor's `webhook.url_env`. Stdlib-only.
+Tests: `test_alert_runner.py` (11).
 
 ### Explicitly deferred (per owner decision, do not start unprompted)
 Container/subprocess sandboxing (no codegen exists), FastAPI auth/multi-user, PDF export, dashboards.

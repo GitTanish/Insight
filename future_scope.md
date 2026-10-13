@@ -1,12 +1,15 @@
 # Insight v3 Future Scope
 
-Status as of 2026-09-29. Shipped since v2.0: evaluation harness, statistics depth
+Status as of 2026-10-13. Shipped since v2.0: evaluation harness, statistics depth
 (ANOVA/regression/CIs/isotonic calibration), conversation state machine, packaging
 (Docker/CI/query cache), DOCX consolidation, embedded DuckDB relational analytics
 (multi-file joins/windows via sandboxed `sql_query`) and dbt/alert artifact exports.
 Recently: token-by-token answer streaming, prefix-cached planner prompts,
 cache on the SSE path, background briefing polish, and human-in-the-loop plan
-approval (`INSIGHT_PLAN_APPROVAL=on`).
+approval (`INSIGHT_PLAN_APPROVAL=on`). Latest: **agentic tool-use mode**
+(`INSIGHT_AGENTIC` — ops as tools, bounded observe/plan/act/refine loop over the
+same verified pipeline) and the **alert-runner companion worker**
+(`tools/alert_runner.py`).
 A Python code-interpreter sandbox was explicitly skipped by the owner — DuckDB
 covers the analytical surface safely.
 
@@ -42,9 +45,19 @@ policies before aggregates are computed.
 The query-result cache now serves the SSE path too (~0.23-0.39s repeats vs
 7.8s cold). Remaining work here is only cache-hit UI polish, not the plumbing.
 
-### 5. Alert-runner reference implementation
-The exported monitor JSON needs a tiny companion worker (cron → DuckDB → webhook)
-to close the loop; ship it as `tools/alert_runner.py`.
+### 5. ~~Alert-runner reference implementation~~ — shipped
+`tools/alert_runner.py` runs exported monitor JSONs on a schedule through the
+same sandboxed DuckSession and posts Slack-compatible payloads on threshold
+state-change (see README "Alert runner").
+
+### 6. Agentic mode — shipped, live A/B still open
+`INSIGHT_AGENTIC` routes questions through the tool-calling loop
+(`insight/tools/`) with the same verification tail. The loop is offline-tested;
+the A/B harness against golden cases (`evaluation/run_eval_agentic.py`) has not
+been re-run on a fresh quota. Sweet spots worth measuring next: whether agentic
+recovers more first-pass plans (fewer repairs) vs single-shot at similar LLM
+call counts, and whether a System One op-classifier router can cut calls
+further (the `OperationRouter` seam is in place).
 
 ### Explicitly deferred (per owner decision)
 Python code-interpreter sandboxing (DuckDB chosen instead), auth/multi-user,

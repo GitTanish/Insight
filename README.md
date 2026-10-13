@@ -64,9 +64,45 @@ With `INSIGHT_PLAN_APPROVAL=on` the pipeline inserts a human gate between the pl
 
 ---
 
+## Agent mode (opt-in)
+
+The default planner asks the model for one complete `AnalysisPlan` up front. **Agent mode** (`INSIGHT_AGENTIC=on`, or the per-question *Agent mode* toggle next to the composer) lets the model instead call the engine's operations **as tools, one at a time**:
+
+```
+question → [call op → read real computed result] ×n → final answer
+                │                                    │
+                └─ live tool trail over SSE          └─ rebuilt into a plan →
+                                                          validator · independent
+                                                          recompute · charts ·
+                                                          explainer · grounding
+```
+
+- **It observes before it decides.** A failed call (unknown column, bad params) comes back as a readable error, so the model fixes it instead of the whole plan dying on one mistake. It can also chain: pass `input_step` to run on an earlier step's output table, or let `filter_rows` narrow the working row-set for later calls.
+- **It is bounded.** `INSIGHT_AGENTIC_MAX_ITERATIONS` / `INSIGHT_AGENTIC_MAX_LLM_CALLS` cap turns and provider calls; three identical failing calls abort the run; rate limits surface as a visible "throttled" outcome, never a wrong answer.
+- **The guarantees do not move.** Every tool call is validated into the op's Pydantic params and executed by the same `OperationSpec.run` the executor uses — no free-form code, ever. Afterwards the run is *rebuilt* into an `AnalysisPlan` + `ExecutionResult`, so validation, the independent recomputation of every headline number, chart rendering, the explainer and the number-grounding guard are the exact same code the single-shot path uses. What changes is how the evidence is gathered, not how it is verified.
+- **Chart planning is deterministic in this mode:** the two most recent table-producing steps are rendered with the same editorial rules, and any bad chart spec is rejected by the ordinary validator rather than trusted.
+- Provider-agnostic: OpenAI-shaped tools on every OpenAI-compatible endpoint, Anthropic-shaped tools when the chain's primary provider is Anthropic.
+- Benchmark it against the single-shot planner with the same golden cases and grader: `python evaluation/run_eval_agentic.py --model groq/openai/gpt-oss-120b` (live, needs a key). The agentic path is covered offline by the fake-LLM suite; it has not been live-benchmarked.
+
+---
+
+## Alert runner
+
+A SQL answer exports an **Alert monitor** (query + cron hint + threshold + Slack-ready webhook template). `tools/alert_runner.py` is the companion worker that closes the loop:
+
+```bash
+python -m tools.alert_runner --data data --monitors .artifacts/monitors --interval 300
+python -m tools.alert_runner --once --dry-run     # render payloads, post nothing
+```
+
+It registers the CSVs as DuckDB tables, runs each monitor's query through the *same sandboxed session* the webapp uses (SELECT/WITH-only, keyword guards, interrupt watchdog, row cap), applies the threshold, and posts to the webhook when the condition **changes state** (recovery notifications via `--notify-recovery`, `--repeat` to post every cycle instead). Stdlib-only; the URL comes from the monitor's `webhook.url_env` (default `INSIGHT_ALERT_WEBHOOK_URL`) or `--webhook`.
+
+---
+
 ## Features
 
 - **Zero-prompt briefing** — the moment a CSV lands, deterministic detectors surface the three most important findings (trend breaks, outliers, strong correlations, class imbalance, data quality), each with an *Investigate* button.
+- **Agentic tool-use mode (opt-in)** — flip on **Agent mode** and the model stops writing one big plan: it calls analysis ops *as tools, one at a time*, reads each real computed result, and decides what to do next (retry a bad call, chain from an earlier step's table, or conclude). It is bounded (iteration + call budgets, throttle-aware, identical-failure abort), DAG-chained via `input_step`, and — crucially — it runs on the *same* guarantees: every call routes through the deterministic op registry and column validator, and the answer is rebuilt into a plan so the validator, independent recomputation, charts, explainer and grounding guard all still apply. The tool trail streams live into the UI.
 - **Verified answers** — a validator checks sanity and small-sample caveats; an independent recomputation layer re-derives aggregates through a second code path and flags any mismatch before you see the answer.
 - **Statistical tests without statistics mistakes** — binary-vs-numeric questions route to Welch's t-test or Mann–Whitney U with Cohen's d and plain-language group differences ("Class 1 averages 32% lower"); categorical pairs get chi-square with Cramér's V; 3+ groups vs numeric route to one-way ANOVA with η². Point-biserial correlation traps are actively blocked.
 - **Regression & calibration** — OLS via `np.linalg.lstsq` with t-stat p-values, R² and standardized betas; `isotonic_calibration` audits whether a score truly tracks a binary outcome (PAV fit, reliability table, Brier before/after recalibration, ECE).
@@ -241,6 +277,10 @@ File limits: up to 1,000,000 rows · CSV (UTF-8/Latin-1/CP1252, delimiters `,` `
 | `INSIGHT_QUERY_CACHE_MAX_MB` | `512` | size budget; oldest entries evicted first |
 | `INSIGHT_BRIEFING_LLM_POLISH` | `off` | one extra fast LLM call to sharpen briefing headlines (numbers frozen). Runs in the background — the upload response never waits on it. |
 | `INSIGHT_PLAN_APPROVAL` | `off` | stop at an editable plan for review before executing (`on`) |
+| `INSIGHT_AGENTIC` | `off` | default question mode: agentic tool-calling loop instead of the single-shot planner (per-question override in both UIs) |
+| `INSIGHT_AGENTIC_MAX_ITERATIONS` | `5` | max model turns per agentic question |
+| `INSIGHT_AGENTIC_MAX_LLM_CALLS` | `9` | hard cap on provider calls per agentic question |
+| `INSIGHT_AGENTIC_DELAY_S` | `0` | seconds between agentic provider calls (throttle headroom on free tiers) |
 
 **Deployment note:** the webapp is single-worker by design — sessions (CSV bytes, profile, turns) live in process memory. Run exactly one uvicorn worker; horizontal scaling requires externalizing session state first. Put a TLS-terminating reverse proxy in front before exposing beyond localhost; there is no built-in auth or rate limiting.
 
@@ -265,6 +305,7 @@ main.py                  Streamlit entry point (legacy UI, same engine)
 │   ├── profiling/       Dataset profiler + fingerprinting
 │   ├── planning/        Planner (structured output + repair), prompt builders
 │   ├── analytics/       Deterministic operation library (15 ops incl. DuckDB sql_query)
+│   ├── tools/           Opt-in agentic tool-use layer: op→tool schemas, dispatch, bounded loop, plan rebuild
 │   ├── briefing.py      zero-prompt top-findings engine (+ optional LLM polish flag)
 │   ├── conversation/    AnalysisSessionState — filters/dims/metrics across turns
 │   ├── execution/       Plan executor (sync core, async wrapper, input_step DAG)
@@ -274,6 +315,7 @@ main.py                  Streamlit entry point (legacy UI, same engine)
 │   ├── visualization/   Editorial theme + chart renderer from ChartSpec
 │   └── orchestrator.py  plan → execute → validate → repair → render → explain (+ streaming variant)
 ├── evaluation/          golden-question harness: generator, 20 cases, scorer/reporter
+├── tools/               companion workers (alert_runner: cron → DuckDB → webhook)
 └── tests/               pytest suite (fake LLM, zero network needed)
 ```
 
@@ -363,7 +405,7 @@ Tracing is fully optional — with no key the engine runs identically and posts 
 
 ## Roadmap
 
-Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅
+Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅ · agentic tool-use mode + alert-runner companion worker ✅
 
 **Up next** (detailed notes in [HANDOVER.md](HANDOVER.md)):
 
