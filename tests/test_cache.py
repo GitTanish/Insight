@@ -14,6 +14,7 @@ class _FakeSettings:
         self.query_cache_max_mb = 512
         self.temperature = 0.0
         self.default_model_id = "groq/x"
+        self.agentic = False
 
 
 def _enable_cache(monkeypatch, tmp_path):

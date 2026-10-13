@@ -221,7 +221,8 @@ def test_llm_router_parses_tool_call_response(profile, sales_df):
     router = LLMOperationRouter(_gen, "m", "sys")
     state = LoopState(question="q", df=sales_df, profile=profile)
     action = asyncio.run(router.next_action(state))
-    assert action["tool_call"].name == "group_aggregate"
+    assert [c.name for c in action["tool_calls"]] == ["group_aggregate"]
+    assert action["tool_calls"][0].id == "x"
 
 
 def test_llm_router_falls_back_to_final_text(profile, sales_df):
