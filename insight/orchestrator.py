@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, AsyncIterator, Optional
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
 
 from insight.domain.dataset import DatasetProfile
 from insight.domain.errors import (
@@ -83,7 +84,11 @@ class _Chain:
             started = time.monotonic()
             try:
                 response = await provider.generate(effective)
-                if not (response.content or "").strip():
+                # A tool-calling turn legitimately returns empty content with
+                # the invocation in `tool_calls` — that is not an error.
+                if not (response.content or "").strip() and not (
+                    response.tool_calls or []
+                ):
                     raise InsightError(
                         f"{provider.name}/{model} returned empty content"
                     )
@@ -218,6 +223,369 @@ def _fallback_answer(validation, execution_result) -> str:
     return "\n".join(lines)
 
 
+@dataclass
+class _TailCtx:
+    """Everything the shared validate→render→explain→verify tail needs."""
+
+    df: Any
+    profile: DatasetProfile
+    request: AnalysisRequest
+    plan: AnalysisPlan
+    execution: Any
+    validation: Any
+    chain: Any
+    history: Optional[list[tuple[str, str]]]
+    state: Optional[AnalysisSessionState]
+    table_datasets: dict
+    artifacts_dir: Any
+    started: float
+    planning_ms: int
+    root_client: Any = None
+    root_run: Any = None
+    cache_key: Optional[str] = None
+    cacheable: bool = False
+    repair_attempted: bool = False
+    repair_ms: int = 0
+    repair_attempts: int = 0
+    repair_issues: list[str] = field(default_factory=list)
+    # Merged into response.meta / appended as evidence warnings.
+    extra_meta: dict = field(default_factory=dict)
+    extra_warnings: list[str] = field(default_factory=list)
+
+
+async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
+    """Shared pipeline tail: state, charts, explainer, grounding, response.
+
+    Identical for single-shot and agentic mode — the point is that an agentic
+    answer is validated, recomputed, rendered, narrated and grounded by the
+    exact same code path as a planned one.
+    """
+    from pathlib import Path as _PathDir
+
+    from insight.observability import finish_root_run, trace_phase
+
+    plan = ctx.plan
+    execution = ctx.execution
+    validation = ctx.validation
+    chain = ctx.chain
+    profile = ctx.profile
+    request = ctx.request
+    settings = get_settings()
+    table_datasets = ctx.table_datasets
+
+    if ctx.artifacts_dir is not None:
+        ctx.artifacts_dir = _PathDir(ctx.artifacts_dir)
+
+    analysis_state = extract_state_from_plan(plan, base=ctx.state)
+    if profile.fingerprint.dataset_id:
+        analysis_state.dataset_id = profile.fingerprint.dataset_id
+
+    key_facts = [
+        f"{c.label}: {_cell(c.value)}"
+        for c in execution.all_calculations()[:12]
+        if c.value not in (None, "")
+    ][:3]
+    record_result(
+        analysis_state,
+        question=request.question,
+        operations=[s.operation for s in execution.steps if s.success],
+        key_facts=key_facts,
+    )
+    yield {"type": "state", "state": analysis_state.model_dump(mode="json")}
+
+    try:
+        from insight.agentic import suggest_followups
+
+        followups = suggest_followups(
+            profile, state=analysis_state, tables=table_datasets
+        )
+    except Exception:
+        followups = []
+    yield {"type": "suggestions", "followups": followups}
+
+    warnings_text = "\n".join(
+        validation.warning_messages() + ctx.extra_warnings
+    )
+
+    yield {"type": "stage", "key": "rendering", "label": "Rendering editorial charts..."}
+    t_charts = time.monotonic()
+    ctx.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    with trace_phase("visualization.render_charts", charts=len(plan.charts)):
+        plots, chart_warnings = render_charts(
+            plan.charts, execution.tables_by_step(), ctx.artifacts_dir, EDITORIAL_THEME
+        )
+    charts_ms = int((time.monotonic() - t_charts) * 1000)
+    figures_text = "\n".join(
+        f"{i}. {plot.chart_type} — \"{plot.title}\""
+        for i, plot in enumerate(plots, start=1)
+    )
+
+    yield {"type": "stage", "key": "explaining", "label": "Composing the dispatch..."}
+    explainer_request = LLMRequest(
+        messages=[
+            {"role": m["role"], "content": m["content"]}
+            for m in build_explainer_messages(
+                question=request.question,
+                objective=plan.objective,
+                tables_markdown=_tables_markdown(execution),
+                calculations_text=_calculations_text(execution),
+                warnings_text="\n".join(
+                    filter(None, [warnings_text, "\n".join(chart_warnings)])
+                ),
+                figures_text=figures_text,
+            )
+        ],
+        model=chain.primary_model,
+        temperature=None,
+        max_tokens=settings.explainer_max_tokens,
+        reasoning_effort=chain.reasoning_effort,
+    )
+
+    t_explain = time.monotonic()
+    answer_chunks: list[str] = []
+    first_token_ms: Optional[int] = None
+    with trace_phase("explainer.compose"):
+        try:
+            async for delta in chain.stream(explainer_request):
+                if not delta:
+                    continue
+                if first_token_ms is None:
+                    first_token_ms = int((time.monotonic() - t_explain) * 1000)
+                answer_chunks.append(delta)
+                yield {"type": "delta", "text": delta}
+            answer = "".join(answer_chunks).strip()
+            if not answer:
+                answer = _fallback_answer(validation, execution)
+        except InsightError:
+            answer = _fallback_answer(validation, execution)
+    explaining_ms = int((time.monotonic() - t_explain) * 1000)
+
+    unverified_figures: list[str] = []
+    grounding_retry_ms = 0
+    if settings.answer_grounded_check and answer and answer != _fallback_answer(validation, execution):
+        from insight.validation.grounding import (
+            build_grounding_retry_message,
+            find_ungrounded_numbers,
+        )
+
+        unverified_figures = find_ungrounded_numbers(
+            answer,
+            execution.all_calculations(),
+            list(execution.tables_by_step().values()),
+            notes="; ".join(
+                filter(None, [getattr(s.output, "notes", None) for s in execution.steps if s.success])
+            ),
+            warnings=validation.warning_messages() + chart_warnings,
+        )
+        if unverified_figures:
+            yield {
+                "type": "stage",
+                "key": "grounding",
+                "label": "Verifying cited numbers...",
+                "level": "warn",
+            }
+            retry_messages = [
+                {"role": m["role"], "content": m["content"]}
+                for m in build_explainer_messages(
+                    question=request.question,
+                    objective=plan.objective,
+                    tables_markdown=_tables_markdown(execution),
+                    calculations_text=_calculations_text(execution),
+                    warnings_text="\n".join(
+                        filter(None, [warnings_text, "\n".join(chart_warnings)])
+                    ),
+                    figures_text=figures_text,
+                )
+            ]
+            retry_messages.append({"role": "assistant", "content": answer})
+            retry_messages.append({
+                "role": "user",
+                "content": build_grounding_retry_message(unverified_figures),
+            })
+            try:
+                t_ground = time.monotonic()
+                yield {"type": "delta_reset"}
+                rewritten: list[str] = []
+                async for delta in chain.stream(LLMRequest(
+                    messages=retry_messages,
+                    model=chain.primary_model,
+                    temperature=None,
+                    max_tokens=settings.explainer_max_tokens,
+                    reasoning_effort=chain.reasoning_effort,
+                )):
+                    if delta:
+                        rewritten.append(delta)
+                        yield {"type": "delta", "text": delta}
+                retried_answer = "".join(rewritten).strip()
+                if not retried_answer:
+                    raise InsightError("empty rewrite")
+                still_bad = find_ungrounded_numbers(
+                    retried_answer,
+                    execution.all_calculations(),
+                    list(execution.tables_by_step().values()),
+                    warnings=validation.warning_messages() + chart_warnings,
+                )
+                answer = retried_answer
+                unverified_figures = still_bad
+            except InsightError:
+                pass
+            finally:
+                grounding_retry_ms = int((time.monotonic() - t_ground) * 1000)
+
+    evidence: list[Evidence] = [
+        Evidence(kind="calculation", label=c.label, value=_cell(c.value), detail=c.detail)
+        for c in execution.all_calculations()[:12]
+    ]
+    for message in validation.warning_messages() + ctx.extra_warnings:
+        evidence.append(Evidence(kind="warning", label=message))
+    for message in chart_warnings:
+        evidence.append(Evidence(kind="warning", label=message))
+    if unverified_figures:
+        evidence.append(Evidence(
+            kind="warning",
+            label=(
+                "answer contained figures not found in computed results: "
+                + ", ".join(unverified_figures[:6])
+            ),
+        ))
+
+    meta: dict = {
+        "model": chain.last_used,
+        "objective": plan.objective,
+        "repair_attempted": ctx.repair_attempted,
+        "planning_ms": ctx.planning_ms,
+        "repair_ms": ctx.repair_ms,
+        "repair_attempts": ctx.repair_attempts,
+        "repair_issues": list(ctx.repair_issues)[:8],
+        "charts_ms": charts_ms,
+        "cached_prompt_tokens": chain.cached_tokens_in,
+        "prompt_tokens": chain.tokens_in,
+        "completion_tokens": chain.tokens_out,
+        "grounding_retry_ms": grounding_retry_ms,
+        "first_token_ms": first_token_ms,
+        "explaining_ms": explaining_ms,
+        "execution_ms": execution.duration_ms,
+        "total_ms": int((time.monotonic() - ctx.started) * 1000),
+        "tokens_in": chain.tokens_in,
+        "tokens_out": chain.tokens_out,
+        "llm_calls": chain.llm_calls,
+        "llm_latency_ms": chain.llm_latency_ms,
+        "dataset_id": profile.fingerprint.dataset_id,
+        "analysis_state": analysis_state.model_dump(mode="json"),
+        "followups": followups,
+        "unverified_figures": unverified_figures,
+        "steps": [
+            {
+                "step_id": s.step_id,
+                "operation": s.operation,
+                "success": s.success,
+                "error": s.error,
+                "params": next(
+                    (
+                        {"reason": p.reason, **p.params}
+                        for p in plan.steps
+                        if p.step_id == s.step_id
+                    ),
+                    {},
+                ),
+            }
+            for s in execution.steps
+        ],
+    }
+    meta.update(ctx.extra_meta)
+
+    final_response = AnalysisResponse(
+        question=request.question,
+        answer=answer,
+        evidence=evidence,
+        tables=list(execution.tables_by_step().values()),
+        plots=plots,
+        validation=validation,
+        meta=meta,
+    )
+
+    if ctx.cacheable and final_response.error is None and validation.valid:
+        from insight import cache as result_cache
+
+        result_cache.store_cached_response(
+            ctx.cache_key or result_cache.cache_key_for(
+                profile, request, ctx.state
+            ), final_response
+        )
+
+    trace_url = current_trace_url()
+    if trace_url:
+        final_response.meta.setdefault("trace_url", trace_url)
+    finish_root_run(
+        ctx.root_client,
+        ctx.root_run,
+        outputs={
+            "answer_chars": len(final_response.answer),
+            "model": final_response.meta.get("model"),
+            "validation_valid": validation.valid,
+            "cache_hit": bool(final_response.meta.get("cache_hit")),
+            "agentic": bool(final_response.meta.get("agentic")),
+            "repair_attempts": ctx.repair_attempts,
+            "repair_issues": list(ctx.repair_issues)[:8],
+            "unverified_figures": unverified_figures,
+            "followups": followups,
+            "latency_ms": {
+                "planning": ctx.planning_ms,
+                "repair": ctx.repair_ms,
+                "execution": execution.duration_ms,
+                "charts": charts_ms,
+                "explaining": explaining_ms,
+                "grounding_retry": grounding_retry_ms,
+                "total": int((time.monotonic() - ctx.started) * 1000),
+            },
+            "tokens_in": final_response.meta.get("tokens_in"),
+            "tokens_out": final_response.meta.get("tokens_out"),
+            "plots": len(plots),
+        },
+    )
+
+    yield {
+        "type": "result",
+        "response": final_response,
+    }
+
+
+def _agentic_error_answer(outcome) -> str:
+    """Explain an aborted agentic run without inventing anything."""
+    if outcome.throttled:
+        return (
+            "The provider rate-limited the agent mid-analysis, so it stopped "
+            "early — no answer was invented. Wait a moment and retry, switch "
+            "models, or add a fallback provider key."
+        )
+    if outcome.error == "llm_call_budget_exhausted":
+        return (
+            "The agent reached its per-question tool-call budget before it had "
+            "enough evidence. Try a more specific question, or raise "
+            "`INSIGHT_AGENTIC_MAX_LLM_CALLS`."
+        )
+    if outcome.error == "iteration_cap_reached":
+        return (
+            "The agent ran out of allowed turns while gathering evidence — no "
+            "answer was invented. Rephrase the question, or raise "
+            "`INSIGHT_AGENTIC_MAX_ITERATIONS`."
+        )
+    if outcome.error == "repeated_failing_call":
+        return (
+            "The agent kept making the same failing tool call and was stopped. "
+            "Rephrase using the exact column names from the dataset profile."
+        )
+    if not outcome.tool_results:
+        return (
+            "The agent finished without calling any analysis tools, so there "
+            "is no verified evidence to answer from."
+        )
+    return (
+        f"The agent's tool calls all failed ({outcome.error or 'unknown'}). "
+        "No answer was invented — check the column names in the profile and retry."
+    )
+
+
 async def analyze_stream(
     df,
     profile: DatasetProfile,
@@ -324,6 +692,178 @@ async def analyze_stream(
         row_count=profile.row_count,
         column_count=profile.column_count,
     )
+
+    agentic = request.agentic if request.agentic is not None else settings.agentic
+    if agentic:
+        # Agentic mode: the LLM calls engine ops as tools and iterates, then
+        # the SAME tail (validate → recompute → charts → explainer → grounding)
+        # runs on the rebuilt plan/execution. The plan-approval gate does not
+        # apply: the tool trail is the live review, and Stop aborts mid-loop.
+        from insight.analytics.operations import operation_catalog
+        from insight.analytics.sql_engine import DuckSession
+        from insight.planning.prompts import build_agentic_messages
+        from insight.tools.loop import LoopBudget, run_loop
+        from insight.tools.pipeline import (
+            agentic_meta,
+            execution_from_outcome,
+            plan_from_outcome,
+        )
+
+        yield {
+            "type": "stage",
+            "key": "planning",
+            "label": "Agent is investigating (tool-calling mode)...",
+        }
+
+        tool_shape = (
+            "anthropic"
+            if chain.entries and chain.entries[0][0].name == "anthropic"
+            else "openai"
+        )
+        budget = LoopBudget(
+            max_iterations=settings.agentic_max_iterations,
+            max_llm_calls=settings.agentic_max_llm_calls,
+            call_delay_s=settings.agentic_call_delay_s,
+        )
+        initial_messages = build_agentic_messages(
+            request.question,
+            profile,
+            operation_catalog(),
+            sql_schema=sql_schema_text,
+            history=history,
+            session_context=session_context,
+        )
+
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def _emit(event: dict) -> None:
+            await queue.put(event)
+
+        session = (
+            DuckSession(table_datasets) if settings.sql_enabled else None
+        )
+        t_agentic = time.monotonic()
+        with trace_phase("agentic.run_loop", question=request.question):
+            task = asyncio.create_task(run_loop(
+                request.question,
+                df,
+                profile,
+                chain.generate,
+                chain.primary_model,
+                duck_ctx=session,
+                budget=budget,
+                tool_shape=tool_shape,
+                on_event=_emit,
+                initial_messages=initial_messages,
+            ))
+            try:
+                while not task.done() or not queue.empty():
+                    if queue.empty():
+                        await asyncio.sleep(0.02)
+                        continue
+                    yield queue.get()
+                outcome = await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                if session is not None:
+                    session.close()
+        planning_ms = int((time.monotonic() - t_agentic) * 1000)
+
+        ok_results = [r for r in outcome.tool_results if r.ok]
+        if outcome.error is not None or not ok_results:
+            yield {
+                "type": "stage",
+                "key": "planning_failed",
+                "label": "Agent could not complete the analysis",
+                "level": "error",
+            }
+            finish_root_run(
+                root_client, root_run,
+                error=outcome.error or "no_successful_tool_calls",
+            )
+            yield {
+                "type": "result",
+                "response": AnalysisResponse(
+                    question=request.question,
+                    answer=_agentic_error_answer(outcome),
+                    meta={
+                        "model": chain.last_used,
+                        "planning_ms": planning_ms,
+                        **agentic_meta(outcome),
+                    },
+                    error=outcome.error or "no_tools_called",
+                ),
+            }
+            return
+
+        try:
+            agentic_plan = plan_from_outcome(outcome, request.question)
+            agentic_execution = execution_from_outcome(outcome, df)
+        except ValueError as exc:
+            yield {
+                "type": "result",
+                "response": AnalysisResponse(
+                    question=request.question,
+                    answer=(
+                        "The agent's tool calls could not be turned into an "
+                        f"analysis: {exc}"
+                    ),
+                    meta={"model": chain.last_used, **agentic_meta(outcome)},
+                    error="agentic_plan_rebuild_failed",
+                ),
+            }
+            return
+
+        yield {
+            "type": "plan_preview",
+            "objective": agentic_plan.objective,
+            "steps": [
+                {"id": s.step_id, "operation": s.operation}
+                for s in agentic_plan.steps
+            ],
+        }
+
+        extra_warnings = [
+            f"agent tool call '{r.name}' failed (recovered or abandoned): "
+            f"{r.content[:160]}"
+            for r in outcome.tool_results
+            if not r.ok
+        ][:3]
+
+        with trace_phase("validation.validate_execution"):
+            validation = validate_execution(
+                agentic_plan, agentic_execution, df=df, profile=profile
+            )
+        yield {
+            "type": "validation",
+            "valid": validation.valid,
+            "warning_count": len(validation.warnings),
+        }
+
+        async for event in _tail_events(_TailCtx(
+            df=df,
+            profile=profile,
+            request=request,
+            plan=agentic_plan,
+            execution=agentic_execution,
+            validation=validation,
+            chain=chain,
+            history=history,
+            state=state,
+            table_datasets=table_datasets,
+            artifacts_dir=artifacts_dir,
+            started=started,
+            planning_ms=planning_ms,
+            root_client=root_client,
+            root_run=root_run,
+            cache_key=cache_key,
+            cacheable=cacheable,
+            extra_meta=agentic_meta(outcome),
+            extra_warnings=extra_warnings,
+        )):
+            yield event
+        return
 
     planner = Planner(
         generate=chain.generate,
@@ -467,264 +1007,31 @@ async def analyze_stream(
         finally:
             repair_ms += int((time.monotonic() - t_repair) * 1000)
 
-    analysis_state = extract_state_from_plan(plan, base=state)
-    if profile.fingerprint.dataset_id:
-        analysis_state.dataset_id = profile.fingerprint.dataset_id
-
-    key_facts = [
-        f"{c.label}: {_cell(c.value)}"
-        for c in execution.all_calculations()[:12]
-        if c.value not in (None, "")
-    ][:3]
-    record_result(
-        analysis_state,
-        question=request.question,
-        operations=[s.operation for s in execution.steps if s.success],
-        key_facts=key_facts,
-    )
-    yield {"type": "state", "state": analysis_state.model_dump(mode="json")}
-
-    try:
-        from insight.agentic import suggest_followups
-
-        followups = suggest_followups(
-            profile, state=analysis_state, tables=table_datasets
-        )
-    except Exception:
-        followups = []
-    yield {"type": "suggestions", "followups": followups}
-
-    yield {"type": "stage", "key": "rendering", "label": "Rendering editorial charts..."}
-    t_charts = time.monotonic()
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
-    with trace_phase("visualization.render_charts", charts=len(plan.charts)):
-        plots, chart_warnings = render_charts(
-            plan.charts, execution.tables_by_step(), artifacts_dir, EDITORIAL_THEME
-        )
-    charts_ms = int((time.monotonic() - t_charts) * 1000)
-    figures_text = "\n".join(
-        f"{i}. {plot.chart_type} — \"{plot.title}\""
-        for i, plot in enumerate(plots, start=1)
-    )
-
-    yield {"type": "stage", "key": "explaining", "label": "Composing the dispatch..."}
-    explainer_request = LLMRequest(
-        messages=[
-            {"role": m["role"], "content": m["content"]}
-            for m in build_explainer_messages(
-                question=request.question,
-                objective=plan.objective,
-                tables_markdown=_tables_markdown(execution),
-                calculations_text=_calculations_text(execution),
-                warnings_text="\n".join(validation.warning_messages() + chart_warnings),
-                figures_text=figures_text,
-            )
-        ],
-        model=chain.primary_model,
-        temperature=None,
-        max_tokens=settings.explainer_max_tokens,
-        reasoning_effort=chain.reasoning_effort,
-    )
-
-    t_explain = time.monotonic()
-    answer_chunks: list[str] = []
-    first_token_ms: Optional[int] = None
-    with trace_phase("explainer.compose"):
-        try:
-            async for delta in chain.stream(explainer_request):
-                if not delta:
-                    continue
-                if first_token_ms is None:
-                    first_token_ms = int((time.monotonic() - t_explain) * 1000)
-                answer_chunks.append(delta)
-                yield {"type": "delta", "text": delta}
-            answer = "".join(answer_chunks).strip()
-            if not answer:
-                answer = _fallback_answer(validation, execution)
-        except InsightError:
-            answer = _fallback_answer(validation, execution)
-    explaining_ms = int((time.monotonic() - t_explain) * 1000)
-
-    unverified_figures: list[str] = []
-    grounding_retry_ms = 0
-    if settings.answer_grounded_check and answer and answer != _fallback_answer(validation, execution):
-        from insight.validation.grounding import (
-            build_grounding_retry_message,
-            find_ungrounded_numbers,
-        )
-
-        unverified_figures = find_ungrounded_numbers(
-            answer,
-            execution.all_calculations(),
-            list(execution.tables_by_step().values()),
-            notes="; ".join(
-                filter(None, [getattr(s.output, "notes", None) for s in execution.steps if s.success])
-            ),
-            warnings=validation.warning_messages() + chart_warnings,
-        )
-        if unverified_figures:
-            yield {
-                "type": "stage",
-                "key": "grounding",
-                "label": "Verifying cited numbers...",
-                "level": "warn",
-            }
-            retry_messages = [
-                {"role": m["role"], "content": m["content"]}
-                for m in build_explainer_messages(
-                    question=request.question,
-                    objective=plan.objective,
-                    tables_markdown=_tables_markdown(execution),
-                    calculations_text=_calculations_text(execution),
-                    warnings_text="\n".join(validation.warning_messages() + chart_warnings),
-                    figures_text=figures_text,
-                )
-            ]
-            retry_messages.append({"role": "assistant", "content": answer})
-            retry_messages.append({
-                "role": "user",
-                "content": build_grounding_retry_message(unverified_figures),
-            })
-            try:
-                t_ground = time.monotonic()
-                yield {"type": "delta_reset"}
-                rewritten: list[str] = []
-                async for delta in chain.stream(LLMRequest(
-                    messages=retry_messages,
-                    model=chain.primary_model,
-                    temperature=None,
-                    max_tokens=settings.explainer_max_tokens,
-                    reasoning_effort=chain.reasoning_effort,
-                )):
-                    if delta:
-                        rewritten.append(delta)
-                        yield {"type": "delta", "text": delta}
-                retried_answer = "".join(rewritten).strip()
-                if not retried_answer:
-                    raise InsightError("empty rewrite")
-                still_bad = find_ungrounded_numbers(
-                    retried_answer,
-                    execution.all_calculations(),
-                    list(execution.tables_by_step().values()),
-                    warnings=validation.warning_messages() + chart_warnings,
-                )
-                answer = retried_answer
-                unverified_figures = still_bad
-            except InsightError:
-                pass
-            finally:
-                grounding_retry_ms = int((time.monotonic() - t_ground) * 1000)
-
-    evidence: list[Evidence] = [
-        Evidence(kind="calculation", label=c.label, value=_cell(c.value), detail=c.detail)
-        for c in execution.all_calculations()[:12]
-    ]
-    for message in validation.warning_messages() + chart_warnings:
-        evidence.append(Evidence(kind="warning", label=message))
-    if unverified_figures:
-        evidence.append(Evidence(
-            kind="warning",
-            label=(
-                "answer contained figures not found in computed results: "
-                + ", ".join(unverified_figures[:6])
-            ),
-        ))
-
-    meta: dict = {
-        "model": chain.last_used,
-        "objective": plan.objective,
-        "repair_attempted": repair_attempted,
-        "planning_ms": planning_ms,
-        "repair_ms": repair_ms,
-        "repair_attempts": repair_attempts,
-        "repair_issues": repair_issues[:8],
-        "charts_ms": charts_ms,
-        "cached_prompt_tokens": chain.cached_tokens_in,
-        "prompt_tokens": chain.tokens_in,
-        "completion_tokens": chain.tokens_out,
-        "grounding_retry_ms": grounding_retry_ms,
-        "first_token_ms": first_token_ms,
-        "explaining_ms": explaining_ms,
-        "execution_ms": execution.duration_ms,
-        "total_ms": int((time.monotonic() - started) * 1000),
-        "tokens_in": chain.tokens_in,
-        "tokens_out": chain.tokens_out,
-        "llm_calls": chain.llm_calls,
-        "llm_latency_ms": chain.llm_latency_ms,
-        "dataset_id": profile.fingerprint.dataset_id,
-        "analysis_state": analysis_state.model_dump(mode="json"),
-        "followups": followups,
-        "unverified_figures": unverified_figures,
-        "steps": [
-            {
-                "step_id": s.step_id,
-                "operation": s.operation,
-                "success": s.success,
-                "error": s.error,
-                "params": next(
-                    (
-                        {"reason": p.reason, **p.params}
-                        for p in plan.steps
-                        if p.step_id == s.step_id
-                    ),
-                    {},
-                ),
-            }
-            for s in execution.steps
-        ],
-    }
-
-    final_response = AnalysisResponse(
-        question=request.question,
-        answer=answer,
-        evidence=evidence,
-        tables=list(execution.tables_by_step().values()),
-        plots=plots,
+    async for event in _tail_events(_TailCtx(
+        df=df,
+        profile=profile,
+        request=request,
+        plan=plan,
+        execution=execution,
         validation=validation,
-        meta=meta,
-    )
-
-    if cacheable and final_response.error is None and validation.valid:
-        from insight import cache as result_cache
-
-        result_cache.store_cached_response(cache_key or result_cache.cache_key_for(
-            profile, request, state
-        ), final_response)
-
-    trace_url = current_trace_url()
-    if trace_url:
-        final_response.meta.setdefault("trace_url", trace_url)
-    finish_root_run(
-        root_client,
-        root_run,
-        outputs={
-            "answer_chars": len(final_response.answer),
-            "model": final_response.meta.get("model"),
-            "validation_valid": validation.valid,
-            "cache_hit": bool(final_response.meta.get("cache_hit")),
-        "repair_attempts": repair_attempts,
-        "repair_issues": repair_issues[:8],
-            "unverified_figures": unverified_figures,
-            "followups": followups,
-            "latency_ms": {
-                "planning": planning_ms,
-                "repair": repair_ms,
-                "execution": execution.duration_ms,
-                "charts": charts_ms,
-                "explaining": explaining_ms,
-                "grounding_retry": grounding_retry_ms,
-                "total": int((time.monotonic() - started) * 1000),
-            },
-            "tokens_in": final_response.meta.get("tokens_in"),
-            "tokens_out": final_response.meta.get("tokens_out"),
-            "plots": len(plots),
-        },
-    )
-
-    yield {
-        "type": "result",
-        "response": final_response,
-    }
+        chain=chain,
+        history=history,
+        state=state,
+        table_datasets=table_datasets,
+        artifacts_dir=artifacts_dir,
+        started=started,
+        planning_ms=planning_ms,
+        root_client=root_client,
+        root_run=root_run,
+        cache_key=cache_key,
+        cacheable=cacheable,
+        repair_attempted=repair_attempted,
+        repair_ms=repair_ms,
+        repair_attempts=repair_attempts,
+        repair_issues=repair_issues,
+    )):
+        yield event
+    return
 
 
 async def analyze(

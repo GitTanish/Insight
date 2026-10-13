@@ -94,6 +94,23 @@ class Settings(BaseModel):
     )
     max_upload_rows: int = 1_000_000
     max_table_rows: int = 100
+    # Agentic tool-use mode: the LLM calls engine ops as tools, observes the
+    # real computed results, and iterates — bounded by the budgets below.
+    agentic: bool = Field(
+        default_factory=lambda: os.getenv("INSIGHT_AGENTIC", "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
+    agentic_max_iterations: int = Field(
+        default_factory=lambda: int(os.getenv("INSIGHT_AGENTIC_MAX_ITERATIONS", "5") or 5)
+    )
+    agentic_max_llm_calls: int = Field(
+        default_factory=lambda: int(os.getenv("INSIGHT_AGENTIC_MAX_LLM_CALLS", "9") or 9)
+    )
+    agentic_call_delay_s: float = Field(
+        default_factory=lambda: float(os.getenv("INSIGHT_AGENTIC_DELAY_S", "0") or 0)
+    )
     artifacts_dir: Path = ROOT_DIR / ".artifacts"
     custom_base_url: str | None = Field(
         default_factory=lambda: os.getenv("INSIGHT_CUSTOM_BASE_URL") or None

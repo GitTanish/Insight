@@ -156,6 +156,82 @@ def build_repair_user_message(issues: list[str]) -> str:
     )
 
 
+AGENTIC_SYSTEM = """You are the analytical core of Insight in AGENT MODE.
+You answer a data question by calling the available analysis tools, then reading
+each tool's REAL computed result before deciding what to do next. You NEVER
+write code and you NEVER invent numbers — the tools compute everything.
+
+How to work:
+1. Call ONE tool at a time (or a few independent ones in the SAME turn).
+2. Read the result. Every result is prefixed with its step id.
+3. If a tool fails, the result says why (e.g. unknown column, bad params) —
+   fix the arguments and retry, or pick a different tool. Never repeat a
+   failing call unchanged.
+4. Chain when useful: pass "input_step": <step id> to run a tool on an earlier
+   step's output table (DAG), e.g. filter -> group -> compare.
+5. Use the fewest tools that fully answer the question.
+6. When you have enough evidence, reply with your final answer: a concise
+   summary citing ONLY figures that appeared in tool results, with significance
+   stated where a statistical_test ran. Do not call more tools after that.
+
+Hard rules:
+- Only call tools from the provided list; only reference exact column names.
+- Never invent, round, or derive numbers beyond what the tool results show.
+- If the data cannot answer the question, say so plainly in your final answer.
+
+{catalog}
+
+{sql_tables_block}
+
+Dataset profile:
+{profile}
+"""
+
+
+def build_agentic_messages(
+    question: str,
+    profile: DatasetProfile,
+    catalog: str,
+    sql_schema: str | None = None,
+    history: list[tuple[str, str]] | None = None,
+    session_context: str | None = None,
+):
+    """Messages for the agentic tool loop: stable system prefix, then context.
+
+    The system message is the provider's prompt-cache prefix (byte-stable per
+    dataset); per-turn state, history and the question live in later messages.
+    """
+    from insight.llm.base import Message
+
+    system = AGENTIC_SYSTEM.format(
+        catalog=catalog,
+        profile=profile.summary_for_planner(),
+        sql_tables_block=(
+            f"Available SQL tables (embedded DuckDB, read-only):\n{sql_schema}"
+            if sql_schema else "No SQL tables are registered for this session."
+        ),
+    )
+    messages: list[Message] = [Message(role="system", content=system)]
+    if session_context:
+        messages.append(Message(
+            role="user",
+            content=(
+                "Active analysis state carried over from earlier turns:\n"
+                f"{session_context}\n\n"
+                "When the user narrows or shifts scope (e.g. 'now only 2025'), "
+                "restate the FULL resulting filter set explicitly in tool "
+                "arguments - never assume hidden context."
+            ),
+        ))
+    for role, content in (history or [])[-4:]:
+        messages.append(Message(
+            role=role if role in ("user", "assistant") else "user",
+            content=content[:400],
+        ))
+    messages.append(Message(role="user", content=f"Question: {question}"))
+    return messages
+
+
 EXPLAINER_SYSTEM = """You are Insight, a precise data analyst writing the final answer
 for a business user.
 

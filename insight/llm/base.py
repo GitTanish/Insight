@@ -9,8 +9,21 @@ from pydantic import BaseModel, Field
 
 
 class Message(BaseModel):
-    role: Literal["system", "user", "assistant"]
+    role: Literal["system", "user", "assistant", "tool"]
     content: str
+    # Tool-calling fields. Absent (None) on ordinary messages, so serialising
+    # with exclude_none keeps every existing non-tool payload byte-identical.
+    tool_calls: list[dict] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
+
+
+class ToolCall(BaseModel):
+    """A single tool invocation requested by the model (OpenAI shape)."""
+
+    id: str = ""
+    name: str
+    arguments: dict = Field(default_factory=dict)
 
 
 class LLMRequest(BaseModel):
@@ -22,6 +35,11 @@ class LLMRequest(BaseModel):
     allow_server_json: bool = True
     reasoning_effort: str | None = None
     cache_prompt: bool = False
+    # Tool / function calling (OpenAI-compatible endpoints). Ignored by
+    # providers that do not support it; defaults preserve byte-identical
+    # behaviour for every existing non-tool request.
+    tools: list[dict] | None = None
+    tool_choice: str | None = None
 
 
 class LLMResponse(BaseModel):
@@ -32,6 +50,8 @@ class LLMResponse(BaseModel):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     cached_prompt_tokens: int | None = None
+    # Populated when the model responds with tool calls instead of content.
+    tool_calls: list[ToolCall] = Field(default_factory=list)
 
 
 class LLMProvider(abc.ABC):

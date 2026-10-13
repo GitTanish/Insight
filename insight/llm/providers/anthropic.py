@@ -10,7 +10,7 @@ from insight.domain.errors import (
     ProviderError,
     RateLimitError,
 )
-from insight.llm.base import LLMRequest, LLMResponse
+from insight.llm.base import LLMRequest, LLMResponse, ToolCall
 from insight.llm.providers.openai_compat import OpenAICompatibleProvider
 from insight.observability import trace_span
 
@@ -39,13 +39,48 @@ class AnthropicProvider(OpenAICompatibleProvider):
         system_text = "\n\n".join(
             m.content for m in request.messages if m.role == "system"
         )
-        messages = [
-            {"role": m.role, "content": m.content}
-            for m in request.messages
-            if m.role != "system"
-        ]
-        last = request.messages[-1]
-        if request.json_mode and messages and last.role == "user":
+        messages: list[dict[str, Any]] = []
+        for m in request.messages:
+            if m.role == "system":
+                continue
+            if m.role == "tool":
+                # Anthropic wants tool results inside a user turn.
+                block = {
+                    "type": "tool_result",
+                    "tool_use_id": m.tool_call_id or "",
+                    "content": m.content,
+                }
+                if (
+                    messages
+                    and messages[-1]["role"] == "user"
+                    and isinstance(messages[-1]["content"], list)
+                ):
+                    messages[-1]["content"].append(block)
+                else:
+                    messages.append({"role": "user", "content": [block]})
+                continue
+            if m.role == "assistant" and m.tool_calls:
+                blocks: list[dict[str, Any]] = []
+                if m.content:
+                    blocks.append({"type": "text", "text": m.content})
+                for raw in m.tool_calls:
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": raw.get("id", ""),
+                        "name": raw.get("name", ""),
+                        "input": raw.get("arguments") or {},
+                    })
+                messages.append({"role": "assistant", "content": blocks})
+                continue
+            messages.append({"role": m.role, "content": m.content})
+        last = request.messages[-1] if request.messages else None
+        if (
+            request.json_mode
+            and messages
+            and last is not None
+            and last.role == "user"
+            and isinstance(messages[-1]["content"], str)
+        ):
             messages[-1]["content"] += (
                 "\nRespond with ONLY a single valid JSON object."
             )
@@ -68,6 +103,12 @@ class AnthropicProvider(OpenAICompatibleProvider):
                 payload["system"] = system_text
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        if request.tools:
+            payload["tools"] = request.tools
+            if request.tool_choice == "auto":
+                payload["tool_choice"] = {"type": "auto"}
+            elif request.tool_choice:
+                payload["tool_choice"] = {"type": "auto"}
         return payload
 
     @trace_span("provider.generate", run_type="llm")
@@ -101,11 +142,21 @@ class AnthropicProvider(OpenAICompatibleProvider):
 
         data = response.json()
         try:
-            content = "".join(
-                block.get("text", "") for block in data["content"]
-                if block.get("type") == "text"
-            )
-        except (KeyError, TypeError) as exc:
+            text_parts: list[str] = []
+            tool_calls: list[ToolCall] = []
+            for block in data.get("content") or []:
+                if block.get("type") == "text":
+                    text_parts.append(block.get("text") or "")
+                elif block.get("type") == "tool_use":
+                    tool_calls.append(
+                        ToolCall(
+                            id=block.get("id", ""),
+                            name=block.get("name", ""),
+                            arguments=block.get("input") or {},
+                        )
+                    )
+            content = "".join(text_parts)
+        except (AttributeError, TypeError) as exc:
             raise ProviderError(
                 self.name, request.model, f"malformed response: {exc}"
             ) from exc
@@ -118,6 +169,7 @@ class AnthropicProvider(OpenAICompatibleProvider):
             latency_ms=latency_ms,
             prompt_tokens=usage.get("input_tokens"),
             completion_tokens=usage.get("output_tokens"),
+            tool_calls=tool_calls,
         )
 
     async def list_models(self) -> list[str]:

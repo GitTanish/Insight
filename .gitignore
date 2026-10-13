@@ -61,9 +61,16 @@ temp_plot_*.png
 # Insight artifacts & local outputs
 .artifacts/
 
+# Promo film render output (regenerate with: python -m promo.build)
+promo/out/
+
 # Local data & databases
 data/
 evaluation/data/
 *.duckdb
 *.sqlite3
 *.db
+
+# Temporarily ignored untracked files
+AUDIT.md
+promo/

@@ -552,8 +552,14 @@ class TopNOp(TopNParams):
         sort_key = _numeric(work[params.sort_by])
         positions = sort_key.sort_values(
             ascending=params.ascending, na_position="last", kind="stable"
-        ).index
+).index
         ordered = work.iloc[positions].head(params.n)
+
+        calc = Calculation(
+            label=f"top {len(ordered)} by {params.sort_by}",
+            value=_fmt_num(ordered.iloc[0][params.sort_by]) if len(ordered) else "-",
+            detail=f"selected from {len(work):,} rows",
+        )
 
         if params.columns:
             missing = [c for c in params.columns if c not in df.columns]
@@ -561,11 +567,6 @@ class TopNOp(TopNParams):
                 raise OperationError(f"unknown column(s): {missing}")
             ordered = ordered[params.columns]
 
-        calc = Calculation(
-            label=f"top {len(ordered)} by {params.sort_by}",
-            value=_fmt_num(ordered.iloc[0][params.sort_by]) if len(ordered) else "-",
-            detail=f"selected from {len(work):,} rows",
-        )
         return OperationOutput(table=make_table(step_id, "top_n", ordered), calculations=[calc])
 
 

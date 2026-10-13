@@ -21,3 +21,7 @@ class AnalysisRequest(BaseModel):
     # instead of asking the planner again.
     plan_only: bool = False
     approved_plan: Optional[dict] = None
+    # Opt-in agentic tool-use mode. None follows INSIGHT_AGENTIC (server
+    # default); True/False forces the mode per question. Every tool call still
+    # routes through the deterministic op registry and the same guards.
+    agentic: Optional[bool] = None

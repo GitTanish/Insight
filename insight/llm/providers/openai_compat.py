@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import AsyncIterator, ClassVar
 
@@ -11,7 +12,7 @@ from insight.domain.errors import (
     ProviderError,
     RateLimitError,
 )
-from insight.llm.base import LLMProvider, LLMRequest, LLMResponse
+from insight.llm.base import LLMProvider, LLMRequest, LLMResponse, ToolCall
 from insight.observability import trace_span
 
 
@@ -30,7 +31,9 @@ class OpenAICompatibleProvider(LLMProvider):
     def _payload(self, request: LLMRequest) -> dict:
         payload: dict = {
             "model": request.model,
-            "messages": [m.model_dump() for m in request.messages],
+            "messages": [
+                m.model_dump(exclude_none=True) for m in request.messages
+            ],
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
@@ -40,6 +43,10 @@ class OpenAICompatibleProvider(LLMProvider):
             payload["response_format"] = {"type": "json_object"}
         if request.reasoning_effort:
             payload["reasoning_effort"] = request.reasoning_effort
+        if request.tools:
+            payload["tools"] = request.tools
+            if request.tool_choice:
+                payload["tool_choice"] = request.tool_choice
         if request.cache_prompt and self.supports_prompt_cache_key:
             # OpenRouter routes a shared prefix to one backend so repeat calls
             # reuse its cache. Harmless when the prefix genuinely is stable.
@@ -117,11 +124,32 @@ class OpenAICompatibleProvider(LLMProvider):
 
         data = response.json()
         try:
-            content = data["choices"][0]["message"]["content"] or ""
+            message = data["choices"][0]["message"]
+            content = message.get("content") or ""
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError(
                 self.name, request.model, f"malformed response: {exc}"
             ) from exc
+
+        tool_calls: list[ToolCall] = []
+        for raw in message.get("tool_calls") or []:
+            fn = raw.get("function") or {}
+            name = fn.get("name")
+            if not name:
+                continue
+            args_raw = fn.get("arguments")
+            if isinstance(args_raw, str):
+                try:
+                    arguments = json.loads(args_raw) if args_raw.strip() else {}
+                except ValueError:
+                    arguments = {}
+            elif isinstance(args_raw, dict):
+                arguments = args_raw
+            else:
+                arguments = {}
+            tool_calls.append(
+                ToolCall(id=raw.get("id", ""), name=name, arguments=arguments)
+            )
 
         usage = data.get("usage") or {}
         details = usage.get("prompt_tokens_details") or {}
@@ -137,6 +165,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 or usage.get("cache_read_input_tokens")
                 or None
             ),
+            tool_calls=tool_calls,
         )
 
     @trace_span("provider.stream", run_type="llm")

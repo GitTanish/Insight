@@ -44,6 +44,9 @@ def cache_key_for(
     temperature = (
         request.temperature if request.temperature is not None else settings.temperature
     )
+    agentic = (
+        request.agentic if request.agentic is not None else settings.agentic
+    )
     raw = "|".join([
         profile.fingerprint.content_hash,
         profile.fingerprint.schema_hash,
@@ -52,6 +55,7 @@ def cache_key_for(
         request.model_id or settings.default_model_id,
         f"{temperature:.3f}",
         _scope_signature(state),
+        f"agentic={bool(agentic)}",
     ])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 

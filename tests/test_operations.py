@@ -39,6 +39,19 @@ def test_group_count_not_truncated_by_top_n(sales_df):
     assert len(out.table.rows) == 1
 
 
+def test_top_n_columns_subset_may_omit_sort_by(sales_df):
+    params = OPERATIONS["top_n"].params_model(
+        sort_by="revenue",
+        n=3,
+        columns=["region", "category"],
+    )
+    out = OPERATIONS["top_n"].run(sales_df, params, step_id=0)
+    assert out.table.columns == ["region", "category"]
+    assert len(out.table.rows) == 3
+    calc = next(c for c in out.calculations if c.label.startswith("top"))
+    assert calc.value != "-"
+
+
 def test_filters_case_insensitive_eq(sales_df):
     filtered = apply_filters(sales_df, [Filter(column="region", op=FilterOperator.eq, value="north")])
     assert len(filtered) == 15
