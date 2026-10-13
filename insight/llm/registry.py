@@ -110,7 +110,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
 _NON_TEXT_KEYWORDS = (
     "embed", "embedding", "whisper", "tts", "audio", "guard", "safeguard",
     "moderation", "dall-e", "image", "vision-encode", "transcribe",
-    "devstral-embed", "bge", "voyage", "orpheus",
+    "devstral-embed", "bge", "voyage", "orpheus", "opencode",
 )
 
 MODEL_CATALOG: dict[str, ModelInfo] = {}

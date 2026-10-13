@@ -38,6 +38,7 @@ def test_text_model_filter():
     assert is_probably_text_model("whisper-large-v3") is False
     assert is_probably_text_model("meta-llama/llama-prompt-guard-2") is False
     assert is_probably_text_model("canopylabs/orpheus-v1-english") is False
+    assert is_probably_text_model("opencode/x-preview-f-free") is False
 
 
 def test_dedupe_variants():
