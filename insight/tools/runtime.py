@@ -108,12 +108,15 @@ def dispatch(
     profile: DatasetProfile,
     duck_ctx: Any = None,
     step_id: int = 0,
+    validate_columns: bool = True,
 ) -> ToolResult:
     """Validate and run one tool call, returning a :class:`ToolResult`.
 
     Validation reuses the planner's column-canonicalisation so a tool call that
     names a hallucinated column is rejected with the available-column list,
-    exactly like a bad plan step.
+    exactly like a bad plan step. Chained calls (``input_step``) run on an
+    earlier step's output table, whose columns are derived — they are validated
+    by the op itself at runtime instead of against the raw profile.
     """
     spec = OPERATIONS.get(call.name)
     if spec is None:
@@ -127,23 +130,26 @@ def dispatch(
             ),
         )
 
-    step = PlanStep(step_id=step_id, operation=call.name, params=call.arguments or {})
-    plan = AnalysisPlan(objective=f"tool:{call.name}", steps=[step], charts=[])
-    try:
-        plan, issues = validate_plan_columns(plan, profile)
-    except Exception as exc:  # defensive: canonicalisation must never crash the loop
-        return ToolResult(
-            id=call.id, name=call.name, ok=False,
-            content=f"validation error: {type(exc).__name__}: {exc}",
-        )
-    if issues:
-        return ToolResult(
-            id=call.id, name=call.name, ok=False,
-            content="Invalid arguments: " + "; ".join(issues),
-        )
-
-    validated_step = plan.steps[0]
-    validated_params = dict(validated_step.params)
+    arguments = dict(call.arguments or {})
+    arguments.pop("input_step", None)
+    if validate_columns:
+        step = PlanStep(step_id=step_id, operation=call.name, params=arguments)
+        plan = AnalysisPlan(objective=f"tool:{call.name}", steps=[step], charts=[])
+        try:
+            plan, issues = validate_plan_columns(plan, profile)
+        except Exception as exc:  # defensive: canonicalisation must never crash the loop
+            return ToolResult(
+                id=call.id, name=call.name, ok=False,
+                content=f"validation error: {type(exc).__name__}: {exc}",
+            )
+        if issues:
+            return ToolResult(
+                id=call.id, name=call.name, ok=False,
+                content="Invalid arguments: " + "; ".join(issues),
+            )
+        validated_params = dict(plan.steps[0].params)
+    else:
+        validated_params = arguments
     validated_params.pop("input_step", None)
     try:
         params = spec.params_model.model_validate(validated_params)

@@ -5,6 +5,7 @@ import json
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 import markdown
 from fastapi import BackgroundTasks, FastAPI, File, Form, Request, UploadFile
@@ -112,7 +113,18 @@ def _base_ctx(request: Request, session: WebSession) -> dict:
         "temperature": session.temperature if session.temperature is not None else settings.temperature,
         "providers": _provider_status(),
         "has_logo": HAS_LOGO,
+        "agentic_default": settings.agentic,
     }
+
+
+def _resolve_agentic_flag(raw) -> Optional[bool]:
+    """None = follow the server default (INSIGHT_AGENTIC); else force a mode."""
+    if raw is None:
+        return None
+    value = str(raw).strip().lower()
+    if value in {"", "default"}:
+        return None
+    return value in {"1", "true", "on", "yes"}
 
 
 @app.get("/healthz")
@@ -299,6 +311,7 @@ async def query(
     model_id: str = Form(default=""),
     temperature: float = Form(default=-1),
     approved_plan: str = Form(default=""),
+    agentic: str = Form(default=""),
 ):
     sid = request.cookies.get("insight_sid") or svc.new_session_id()
     session = STORE.get_or_create(sid)
@@ -326,6 +339,7 @@ async def query(
         temperature=(temperature if temperature is not None and temperature >= 0 else None),
         api_key=user_key,
         approved_plan=plan_payload,
+        agentic=_resolve_agentic_flag(agentic),
     )
     df, err = svc.parse_csv_content(session.content)
     if df is None:
@@ -433,6 +447,7 @@ async def api_query(request: Request):
         api_key=user_key,
         plan_only=plan_only,
         approved_plan=approved_plan,
+        agentic=_resolve_agentic_flag(body.get("agentic")),
     )
     from insight.orchestrator import analyze_stream
 

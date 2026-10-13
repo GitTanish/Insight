@@ -271,7 +271,14 @@ async def run_loop(
             else:
                 frame = state.frames[input_step] if input_step is not None else working
                 run_call = RuntimeToolCall(id=call_id, name=call.name, arguments=arguments)
-                result = dispatch(run_call, frame, profile, duck_ctx, step_id=step_id)
+                result = dispatch(
+                    run_call,
+                    frame,
+                    profile,
+                    duck_ctx,
+                    step_id=step_id,
+                    validate_columns=input_step is None,
+                )
                 result.input_step = input_step
                 if result.ok and result.frame is not None:
                     state.frames[step_id] = result.frame

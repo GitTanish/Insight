@@ -138,8 +138,15 @@
 
         <form id="composer" class="composer">
             <textarea name="question" rows="2" placeholder="Ask a question about your data..." required></textarea>
-            <button type="submit" class="btn send">Dispatch</button>
-            <button type="button" class="btn stop" id="stop-btn" hidden title="Stop current analysis">Stop</button>
+            <div class="composer-side">
+                <label class="agent-toggle" id="agent-toggle-label"
+                       title="Agent mode: the model calls analysis tools one at a time, sees each real computed result, and iterates — bounded and fully verified, same as a single plan.">
+                    <input type="checkbox" id="agent-mode" {% if agentic_default %}checked{% endif %}>
+                    <span>Agent mode</span>
+                </label>
+                <button type="submit" class="btn send">Dispatch</button>
+                <button type="button" class="btn stop" id="stop-btn" hidden title="Stop current analysis">Stop</button>
+            </div>
         </form>
         <p class="caption center">LLM plans · pandas computes · validator verifies · every claim links to its calculation.</p>
     </main>

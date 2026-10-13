@@ -15,6 +15,13 @@
 
     <div class="chip-row">
         <span class="chip"><span class="chip-key">model</span> {{ response.meta.get('model', '?') }}</span>
+        {% if response.meta.get('agentic') %}
+            <span class="chip chip-agent" title="Answered by the tool-calling agent loop — same deterministic engine, same verification">
+                <span class="chip-key">mode</span> agent</span>
+            <span class="chip"><span class="chip-key">agent</span>
+                {{ response.meta.get('agentic_llm_calls', 0) }} call(s) ·
+                {{ response.meta.get('agentic_iterations', 0) }} turn(s)</span>
+        {% endif %}
         {% if response.meta.get('total_ms') is not none %}
             <span class="chip"><span class="chip-key">total</span> {{ '{:,}'.format(response.meta['total_ms']) }} ms</span>
         {% endif %}

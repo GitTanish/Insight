@@ -575,6 +575,11 @@ def _agentic_error_answer(outcome) -> str:
             "The agent kept making the same failing tool call and was stopped. "
             "Rephrase using the exact column names from the dataset profile."
         )
+    if outcome.error and not outcome.tool_results:
+        return (
+            f"The agent stopped before answering: {outcome.error}. "
+            "No answer was invented — check your provider key/quota and retry."
+        )
     if not outcome.tool_results:
         return (
             "The agent finished without calling any analysis tools, so there "
@@ -715,11 +720,10 @@ async def analyze_stream(
             "label": "Agent is investigating (tool-calling mode)...",
         }
 
-        tool_shape = (
-            "anthropic"
-            if chain.entries and chain.entries[0][0].name == "anthropic"
-            else "openai"
-        )
+        tool_shape = "anthropic" if (
+            getattr(chain, "entries", None)
+            and chain.entries[0][0].name == "anthropic"
+        ) else "openai"
         budget = LoopBudget(
             max_iterations=settings.agentic_max_iterations,
             max_llm_calls=settings.agentic_max_llm_calls,
@@ -761,7 +765,7 @@ async def analyze_stream(
                     if queue.empty():
                         await asyncio.sleep(0.02)
                         continue
-                    yield queue.get()
+                    yield await queue.get()
                 outcome = await task
             finally:
                 if not task.done():

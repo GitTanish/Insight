@@ -166,6 +166,16 @@ def _render_sidebar():
         with b_col2:
             temperature = st.slider("Temperature", 0.0, 1.0, float(settings.temperature), 0.1)
 
+        agentic = st.checkbox(
+            "Agent mode (tool-calling)",
+            value=settings.agentic,
+            help=(
+                "The model calls analysis tools one at a time, sees each real "
+                "computed result, and iterates — bounded and verified exactly "
+                "like a single plan."
+            ),
+        )
+
         with st.expander("Provider status"):
             _render_provider_status()
 
@@ -185,7 +195,7 @@ def _render_sidebar():
             "Your CSV contents are sent to the selected LLM provider as context."
         )
 
-    return labels.get(choice, settings.default_model_id), temperature
+    return labels.get(choice, settings.default_model_id), temperature, agentic
 
 
 def _render_provider_status():
@@ -363,6 +373,14 @@ def _badges_html(response) -> str:
         )
     if meta.get("tokens_out"):
         chips.append(chip("tokens", f"{meta['tokens_in']:,}→{meta['tokens_out']:,}"))
+    if meta.get("agentic"):
+        chips.append(
+            chip(
+                "mode",
+                f"agent · {meta.get('agentic_llm_calls', 0)} call(s) · "
+                f"{meta.get('agentic_iterations', 0)} turn(s)",
+            )
+        )
     if meta.get("repair_attempted"):
         chips.append("<span class='chip chip-warn'>⚠ self-repaired</span>")
     return f"<div class='chip-row'>{''.join(chips)}</div>"
@@ -430,6 +448,7 @@ def _handle_input(df, profile, selection):
         history=history,
         model_id=selection[0],
         temperature=selection[1],
+        agentic=selection[2] if len(selection) > 2 else None,
     )
 
     session_state_model = None

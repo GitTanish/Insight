@@ -46,6 +46,15 @@
             });
         }
 
+        const agentToggle = document.getElementById("agent-mode");
+        if (agentToggle) {
+            agentToggle.checked = localStorage.getItem("insight_agentic") === "1";
+            agentToggle.addEventListener("change", function () {
+                if (agentToggle.checked) localStorage.setItem("insight_agentic", "1");
+                else localStorage.removeItem("insight_agentic");
+            });
+        }
+
         function apiKeyHeader() {
             const key = userKey && userKey.value.trim();
             return key ? { "X-Insight-Key": key } : {};
@@ -170,6 +179,58 @@
         let liveBubble = null;
         let liveText = "";
         let planPanel = null;
+        let trailEl = null;
+
+        function resetTrail() {
+            if (trailEl && trailEl.parentNode) {
+                trailEl.parentNode.removeChild(trailEl);
+            }
+            trailEl = null;
+        }
+
+        function ensureTrail() {
+            if (trailEl) return trailEl;
+            if (!chat) return null;
+            const wrap = document.createElement("div");
+            wrap.className = "agent-trail";
+            wrap.id = "agent-trail";
+            const label = document.createElement("span");
+            label.className = "mono-label";
+            label.textContent = "Agent tools";
+            wrap.appendChild(label);
+            chat.appendChild(wrap);
+            trailEl = wrap;
+            return wrap;
+        }
+
+        function onToolCall(payload) {
+            const trail = ensureTrail();
+            if (!trail) return;
+            const chip = document.createElement("span");
+            chip.className = "tool-chip pending";
+            chip.setAttribute("data-call", payload.call_id || "");
+            const args = payload.arguments || {};
+            const hint = args.group_by || args.column || args.sort_by
+                || args.query || args.target_column || args.score_column || "";
+            const suffix = Array.isArray(hint) ? hint.join(", ") : String(hint);
+            const chained = payload.input_step != null ? " ← step " + payload.input_step : "";
+            chip.textContent = payload.name
+                + (suffix ? " · " + suffix.slice(0, 28) : "") + chained;
+            trail.appendChild(chip);
+        }
+
+        function onToolResult(payload) {
+            const trail = ensureTrail();
+            if (!trail || !payload.call_id) return;
+            let chip = null;
+            try {
+                chip = trail.querySelector('[data-call="' + payload.call_id + '"]');
+            } catch (_) { return; }
+            if (!chip) return;
+            chip.classList.remove("pending");
+            chip.classList.add(payload.ok ? "ok" : "fail");
+            if (payload.preview) chip.title = payload.preview;
+        }
 
         function removePlanPanel() {
             if (planPanel && planPanel.parentNode) {
@@ -332,6 +393,7 @@
             params.set("question", question);
             if (modelSelect && modelSelect.value) params.set("model_id", modelSelect.value);
             if (tempRange) params.set("temperature", tempRange.value);
+            if (agentToggle) params.set("agentic", agentToggle.checked ? "1" : "0");
             if (approvedPlan) params.set("approved_plan", approvedPlan);
 
             controller = new AbortController();
@@ -385,6 +447,10 @@
                             : "Validator rejected results");
                     } else if (event === "suggestions") {
                         bindFollowups(payload.followups || []);
+                    } else if (event === "tool_call") {
+                        onToolCall(payload);
+                    } else if (event === "tool_result") {
+                        onToolResult(payload);
                     } else if (event === "delta") {
                         appendDelta(payload.text || "");
                     } else if (event === "plan_review") {
@@ -420,6 +486,7 @@
             textarea.value = "";
             appendUser(question);
             resetStatus();
+            resetTrail();
             setStage("planning", "Planning investigation...");
             startTimer();
             setBusy(true);

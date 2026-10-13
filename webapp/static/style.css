@@ -457,6 +457,54 @@ details.evidence > *:not(summary) { padding: 0 0.7rem; }
 .btn.stop { border-color: var(--newspaper-red); color: var(--newspaper-red); }
 .btn.stop:hover:not(:disabled) { background-color: var(--newspaper-red); color: var(--paper-base); }
 
+/* ---- Composer: agent-mode toggle ---- */
+.composer-side {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    justify-content: flex-end;
+}
+.agent-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-family: 'Courier Prime', monospace;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-gray);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+.agent-toggle input { accent-color: var(--newspaper-red); cursor: pointer; }
+.agent-toggle:hover { color: var(--ink-black); }
+
+/* ---- Agent tool trail (live tool calls) ---- */
+.agent-trail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0.4rem 0 0.2rem;
+    padding: 0.45rem 0.6rem;
+    border: 1px dashed var(--ink-black);
+    background-color: rgba(232, 221, 196, 0.6);
+}
+.agent-trail .mono-label { margin-right: 0.2rem; }
+.tool-chip {
+    font-family: 'Courier Prime', monospace;
+    font-size: 0.68rem;
+    padding: 0.1rem 0.45rem;
+    border: 1px solid var(--ink-gray);
+    border-radius: 2px;
+    color: var(--ink-gray);
+    background: var(--paper-base);
+}
+.tool-chip.pending { border-style: dashed; opacity: 0.75; }
+.tool-chip.ok { border-color: var(--ink-black); color: var(--ink-black); border-style: solid; }
+.tool-chip.fail { border-color: var(--newspaper-red); color: var(--newspaper-red); }
+
 /* ---- Suggested follow-ups ---- */
 .followups {
     display: flex;
