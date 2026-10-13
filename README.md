@@ -62,6 +62,12 @@ Every claim in an answer traces back to a calculation you can inspect via **View
 
 With `INSIGHT_PLAN_APPROVAL=on` the pipeline inserts a human gate between the planner and the engine: you see the exact operations, can edit the JSON, and only then approve. Nothing touches your data until you do.
 
+In **agent mode** steps 3–5 are replaced by a bounded loop: the model calls the
+engine's ops *as tools*, reads each real result, and decides what to do next —
+then its findings are rebuilt into a plan so every box below (validation,
+recomputation, charts, narration, grounding) runs unchanged. See
+[Agent mode](#agent-mode-opt-in).
+
 ---
 
 ## Agent mode (opt-in)
@@ -117,7 +123,7 @@ It registers the CSVs as DuckDB tables, runs each monitor's query through the *s
 - **Token-by-token answer streaming** — the explainer streams over SSE into a live typing bubble, so the first words land in ~1s instead of after a multi-second blank wait. Time-to-first-token is measured and shown in the timing chip.
 - **Human-in-the-loop plan approval** — with `INSIGHT_PLAN_APPROVAL=on`, every question stops at an editable plan (the exact operations, as JSON) that you approve before anything runs. Approved plans are *re-validated against your schema*, so a hand-edit naming a nonexistent column is rejected rather than silently trusted.
 - **Live pipeline streaming** — watch *Planning → Executing → Validating → Explaining* happen in real time over SSE.
-- **Headless JSON API** — `POST /api/query` exposes the same verified pipeline for scripts and integrations. Send `plan_only: true` to get a reviewable plan back instead of an answer.
+- **Headless JSON API** — `POST /api/query` exposes the same verified pipeline for scripts and integrations. Send `plan_only: true` to get a reviewable plan back instead of an answer, or `agentic: true` for one tool-calling run.
 - **Query-result cache** — identical (dataset hash, question, model, temperature, session state) hits are served from `.artifacts/cache/` with TTL + size-budget eviction (`INSIGHT_QUERY_CACHE=off` to disable). Serves the streaming UI path too: ~20× faster on repeats.
 - **Prefix-cached prompts** — the planner's system prompt stays byte-stable per dataset (per-turn state lives in later messages, not the prefix), so providers serve it from their prompt cache. Reported as `cached_prompt_tokens`.
 - **Golden-question eval harness** — 20 seeded/real benchmark cases (incl. the 54K-row diamonds dataset and a 250K-row synthetic retail set) with exact ground truth; `python evaluation/run_eval.py --model <id>` produces a per-case PASS/FAIL markdown report.
@@ -348,6 +354,10 @@ Every response includes:
 - **View plan** — the validated step DAG with parameters and reasons
 - **Warnings** — consolidated caveats (small samples, sparse bins, excluded binary correlations)
 
+In agent mode you additionally get the **live tool trail** (each op as it was
+called and whether it succeeded), and a `mode: agent` chip showing how many
+model turns and provider calls the run cost.
+
 Export everything — including the upload briefing — as a formatted Word report.
 
 ---
@@ -368,7 +378,7 @@ Every statistical claim above is a textbook method executed by deterministic cod
 
 ## Security & privacy
 
-- **No arbitrary code execution:** the LLM does not generate or execute arbitrary Python code. All operations route through a fixed library of audited pandas/scipy functions or a strictly sandboxed, read-only embedded DuckDB engine — everything executes inside your own process.
+- **No arbitrary code execution:** the LLM does not generate or execute arbitrary Python code. All operations route through a fixed library of audited pandas/scipy functions or a strictly sandboxed, read-only embedded DuckDB engine — everything executes inside your own process. **Agent mode changes none of this:** a "tool call" can only *select* one of those registered operations and supply its parameters, which are schema-validated and column-checked before anything runs; the model still never writes code.
 - **Context protection:** full tabular datasets are never dumped into the LLM context window. The provider receives only schema definitions, statistical fingerprints (column types, cardinality, missingness, sampled summaries), and the small set of computed aggregate values a given answer actually cites.
 - **Sanitized SQL:** DuckDB queries are accepted only as a single read-only `SELECT`/`WITH` statement. Destructive and administrative keywords (`ATTACH`, `COPY`, `DROP`, `PRAGMA`, …) are rejected, the connection runs in-memory with external access disabled and configuration locked, results are row-capped, and a hard 10-second interrupt aborts runaway queries.
 
@@ -399,6 +409,9 @@ Set `LANGSMITH_API_KEY` (and optionally `LANGSMITH_PROJECT`) to enable full trac
 - the validated **plan** JSON (with repair attempts visible as failed→retried children),
 - one **LLM span per provider call** (model, tokens, latency, retries),
 - step-level execution results and validation outcomes.
+
+Agent-mode runs add an `agentic.run_loop` span plus one span per model turn,
+with the tool calls it made.
 
 Tracing is fully optional — with no key the engine runs identically and posts nothing.
 

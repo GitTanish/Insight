@@ -1,6 +1,7 @@
 # INSIGHT — Session Handover
 
-> Last updated: 2026-09-29 · Engine v2.2.0-alpha · **offline suite green** · **20/20 live eval cases** · Python 3.11 venv at `.venv`
+> Last updated: 2026-10-13 · Engine v2.2.0-alpha · **offline suite green** · **20/20 live eval cases** · Python 3.11 venv at `.venv`
+> Branch note: agentic tool-use mode + alert runner landed on `feat/agentic-tool-use` (not merged to `main` at time of writing).
 
 ---
 
@@ -12,6 +13,7 @@ Core principle: **the LLM never executes code and never invents numbers.**
 ```
 Upload → Profiler + Zero-Prompt Briefing (top-3 findings, no question needed)
       → Planner (LLM) emits a JSON AnalysisPlan → schema/column validated → bounded repair
+        (or, in agent mode: tool-calling loop — ops as tools, bounded, observes each result)
       → [optional human gate: editable plan, Approve & run]
       → Deterministic engine executes 15 ops (chained via input_step DAG)
       → Statistical router runs scipy tests by column types (t-test / Mann-Whitney / chi²+Cramér's V)
@@ -20,7 +22,7 @@ Upload → Profiler + Zero-Prompt Briefing (top-3 findings, no question needed)
       → SSE to UI · DOCX report incl. briefing findings · optional LangSmith trace
 ```
 
-Two front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `webapp/`) and **Streamlit** (`main.py`, maintained).
+Both front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `webapp/`) and **Streamlit** (`main.py`, maintained).
 
 ---
 

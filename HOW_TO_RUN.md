@@ -76,6 +76,18 @@ streamlit run main.py
 5. Open **View calculation** / **View plan** under any answer to inspect it
 6. **Export DOCX** includes the briefing findings plus every answer, chart, and caveat
 
+### Optional: agent mode (tool-calling)
+
+Tick **Agent mode** next to the composer (sidebar checkbox in Streamlit). The
+model then stops writing one big plan and instead calls analysis tools one at a
+time — seeing each real computed result before deciding what to do next. You'll
+watch a **live tool trail** as it works, then get the same verified answer.
+
+It is bounded (`INSIGHT_AGENTIC_MAX_ITERATIONS` / `INSIGHT_AGENTIC_MAX_LLM_CALLS`)
+and stops with a visible message rather than a wrong answer if it runs out of
+budget or the provider throttles it. To make agent mode the default for every
+question, set `INSIGHT_AGENTIC=on` in `.env`.
+
 ### Optional: review every plan before it runs
 
 Set `INSIGHT_PLAN_APPROVAL=on` in `.env` and restart. Each question then stops at
@@ -99,7 +111,30 @@ curl -X POST http://localhost:8000/api/query \
      -d '{"question": "Which region has the highest revenue?", "plan_only": true}'
 # → {"plan": {...}}   then resubmit with the (optionally edited) plan:
 #   -d '{"question": "...", "approved_plan": { ... }}'
+
+# agentic mode for one request (true/false; omit to use the server default)
+curl -X POST http://localhost:8000/api/query \
+     -H "Content-Type: application/json" \
+     -d '{"question": "Which region leads, and by how much?", "agentic": true}'
 ```
+
+### Optional: run an exported alert monitor
+
+A SQL answer in the webapp offers **Alert monitor**, which downloads a JSON
+descriptor. Run it with the companion worker:
+
+```bash
+# one pass, print the payload, post nothing
+python -m tools.alert_runner --data path/to/data --monitors path/to/monitors --once --dry-run
+
+# loop every 5 minutes against a Slack incoming webhook
+python -m tools.alert_runner --data data --monitors monitors --interval 300
+#   set INSIGHT_ALERT_WEBHOOK_URL=... or pass --webhook https://hooks.slack.com/...
+```
+
+It only posts when the condition **changes state**, so a monitor that stays
+triggered does not spam the channel; add `--notify-recovery` to also post when
+it clears, or `--repeat` to post every cycle instead.
 
 ## 5. Run the tests (no API key required)
 
@@ -114,7 +149,11 @@ with `INSIGHT_RUN_EVAL=1 pytest -m eval` (needs a provider key):
 ```bash
 python evaluation/generate_datasets.py
 python evaluation/run_eval.py --model groq/openai/gpt-oss-120b
+python evaluation/run_eval_agentic.py --model groq/openai/gpt-oss-120b --limit 5
 ```
+
+Assert that `pytest -q` exits 0 — not a test count (skips vary by platform and
+by which optional corpora are present).
 
 ---
 
@@ -125,6 +164,10 @@ python evaluation/run_eval.py --model groq/openai/gpt-oss-120b
 | "No LLM provider configured" | `.env` missing/empty — check key spelling and that you saved the file |
 | First question is slow | model catalog scan + cold start; subsequent queries are faster |
 | 429 / rate-limit errors | free Groq tier = 30 req/min; wait or switch model in sidebar |
+| Agent mode says it ran out of budget | expected guardrail, not a crash — narrow the question, or raise `INSIGHT_AGENTIC_MAX_ITERATIONS` / `INSIGHT_AGENTIC_MAX_LLM_CALLS` |
+| Agent mode says it was throttled | the provider rate-limited mid-run; retry shortly, add a fallback provider key, or set `INSIGHT_AGENTIC_DELAY_S=2` to space calls |
+| Agent mode answer says nothing was invented | its tool calls all failed or the budget ran out — rephrase using exact column names, or turn agent mode off for that question |
+| Agent mode toggle has no effect | `INSIGHT_PLAN_APPROVAL=on` forces the review-first planner for every question — that's by design |
 | Port already in use | `streamlit run main.py --server.port 8502` |
 | Wrong Python picked up | activate `.venv` first (step 2), or run `python -m streamlit run main.py` |
 
