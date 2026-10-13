@@ -275,6 +275,11 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
 
     if ctx.artifacts_dir is not None:
         ctx.artifacts_dir = _PathDir(ctx.artifacts_dir)
+    else:
+        # Library callers may omit artifacts_dir; charts still need a directory.
+        import tempfile
+
+        ctx.artifacts_dir = _PathDir(tempfile.mkdtemp(prefix="insight_artifacts_"))
 
     analysis_state = extract_state_from_plan(plan, base=ctx.state)
     if profile.fingerprint.dataset_id:
@@ -699,11 +704,14 @@ async def analyze_stream(
     )
 
     agentic = request.agentic if request.agentic is not None else settings.agentic
+    # Human-in-the-loop wins: the approval gate needs a reviewable plan *before*
+    # anything executes, which only the single-shot planner can produce.
+    if request.plan_only or settings.plan_approval:
+        agentic = False
     if agentic:
         # Agentic mode: the LLM calls engine ops as tools and iterates, then
         # the SAME tail (validate → recompute → charts → explainer → grounding)
-        # runs on the rebuilt plan/execution. The plan-approval gate does not
-        # apply: the tool trail is the live review, and Stop aborts mid-loop.
+        # runs on the rebuilt plan/execution.
         from insight.analytics.operations import operation_catalog
         from insight.analytics.sql_engine import DuckSession
         from insight.planning.prompts import build_agentic_messages

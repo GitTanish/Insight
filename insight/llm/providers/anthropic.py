@@ -105,9 +105,9 @@ class AnthropicProvider(OpenAICompatibleProvider):
             payload["temperature"] = request.temperature
         if request.tools:
             payload["tools"] = request.tools
-            if request.tool_choice == "auto":
-                payload["tool_choice"] = {"type": "auto"}
-            elif request.tool_choice:
+            if request.tool_choice:
+                # The loop only ever asks for "auto"; Anthropic takes the
+                # typed object form.
                 payload["tool_choice"] = {"type": "auto"}
         return payload
 

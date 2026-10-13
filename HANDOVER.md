@@ -207,8 +207,9 @@ Cache key includes the mode. Tests: `test_agentic_pipeline.py` (20),
 bare coroutine never drains the queue and spins the generator forever.
 (2) Stub chains in tests lack `.entries` — the tool-shape check uses
 `getattr`. (3) `_FakeSettings` in `test_cache.py` needs an `agentic` field.
-(4) Agentic mode bypasses the HITL plan-approval gate by design — the tool
-trail *is* the live review; Stop aborts mid-loop.
+(4) Plan approval takes precedence over agentic mode: `plan_only` /
+`INSIGHT_PLAN_APPROVAL` forces the single-shot planner, because the gate needs
+a reviewable plan *before* anything executes.
 
 **Alert-runner** (`tools/alert_runner.py`, roadmap #5): cron → DuckDB →
 webhook worker for exported monitors. Reuses `DuckSession` (same sandbox:

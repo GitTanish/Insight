@@ -82,6 +82,7 @@ question → [call op → read real computed result] ×n → final answer
 - **The guarantees do not move.** Every tool call is validated into the op's Pydantic params and executed by the same `OperationSpec.run` the executor uses — no free-form code, ever. Afterwards the run is *rebuilt* into an `AnalysisPlan` + `ExecutionResult`, so validation, the independent recomputation of every headline number, chart rendering, the explainer and the number-grounding guard are the exact same code the single-shot path uses. What changes is how the evidence is gathered, not how it is verified.
 - **Chart planning is deterministic in this mode:** the two most recent table-producing steps are rendered with the same editorial rules, and any bad chart spec is rejected by the ordinary validator rather than trusted.
 - Provider-agnostic: OpenAI-shaped tools on every OpenAI-compatible endpoint, Anthropic-shaped tools when the chain's primary provider is Anthropic.
+- `INSIGHT_PLAN_APPROVAL=on` (or `plan_only`) takes precedence: that gate needs a reviewable plan before anything executes, so those requests use the single-shot planner.
 - Benchmark it against the single-shot planner with the same golden cases and grader: `python evaluation/run_eval_agentic.py --model groq/openai/gpt-oss-120b` (live, needs a key). The agentic path is covered offline by the fake-LLM suite; it has not been live-benchmarked.
 
 ---

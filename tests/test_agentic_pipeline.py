@@ -481,7 +481,6 @@ def test_agentic_defaults_follow_settings(monkeypatch, tool_stub_chain_factory, 
 
 def test_agentic_cache_key_separates_modes(profile, tmp_path, monkeypatch):
     from insight import cache as result_cache
-    from insight.settings import get_settings
 
     monkeypatch.setattr(result_cache, "get_settings", lambda: type(
         "S", (), {"query_cache_enabled": True, "temperature": 0.0,
@@ -494,6 +493,36 @@ def test_agentic_cache_key_separates_modes(profile, tmp_path, monkeypatch):
         profile, AnalysisRequest(question="same question", agentic=True)
     )
     assert planned != agentic
+
+
+def test_plan_only_takes_precedence_over_agentic(profile, sales_df, tmp_path, monkeypatch, tool_stub_chain_factory):
+    """HITL needs a reviewable plan; agentic execution must not slip past it."""
+    tool_stub_chain_factory([_text_response(
+        '{"objective":"Revenue by region","steps":[{"step_id":0,'
+        '"operation":"group_aggregate","params":{"group_by":"region",'
+        '"metrics":[{"column":"revenue","agg":"sum","alias":"total_revenue"}]}}]}'
+    )])
+    request = AnalysisRequest(question="Which region leads?", agentic=True, plan_only=True)
+    events = asyncio.run(_collect(
+        sales_df, profile, request, artifacts_dir=tmp_path, use_cache=False
+    ))
+    types = _types(events)
+    assert "tool_call" not in types
+    assert "plan_review" in types
+    review = next(e for e in events if e["type"] == "plan_review")
+    assert review["plan"]["steps"][0]["operation"] == "group_aggregate"
+
+
+def test_pipeline_runs_without_artifacts_dir(profile, sales_df, monkeypatch, tool_stub_chain_factory):
+    tool_stub_chain_factory([
+        _tool_response(_group_call("c1")),
+        _text_response("West leads."),
+        _text_response(AGENTIC_ANSWER),
+    ])
+    request = AnalysisRequest(question="Which region leads?", agentic=True)
+    response = run_analysis_sync(sales_df, profile, request, use_cache=False)
+    assert response.error is None
+    assert response.plots
 
 
 # ---- provider tool-call shapes ----------------------------------------------
