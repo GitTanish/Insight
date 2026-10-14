@@ -419,13 +419,16 @@ Tracing is fully optional — with no key the engine runs identically and posts 
 
 ## Roadmap
 
-Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅ · agentic tool-use mode + alert-runner companion worker ✅
+Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · token-by-token answer streaming & prefix caching ✅ · human-in-the-loop plan approval ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction (API & SSE streaming paths) ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅ · agentic tool-use mode + alert-runner companion worker ✅
 
-**Up next** (detailed notes in [HANDOVER.md](HANDOVER.md)):
+**Up next** (detailed notes in [HANDOVER.md](HANDOVER.md) and [future_scope.md](future_scope.md)):
 
-- External session storage (Redis) for multi-worker deployments
+- External session storage (Redis / Valkey) for multi-worker deployments
+- Live database connections (read-only SQLite/Postgres DSN connectors)
 - MAR/MNAR-aware missingness diagnostics (currently MCAR assumption is surfaced as a caveat)
-- Streaming cache for the SSE path; PDF export remains deferred
+- Live A/B evaluation benchmark for agentic mode against golden cases (`run_eval_agentic.py`)
+
+*Explicitly deferred per architectural decision:* Python code-interpreter sandboxing (DuckDB covers relational analytics safely), auth / multi-user, PDF export, and persistent dashboards.
 
 ---
 
