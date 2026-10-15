@@ -381,7 +381,9 @@ def test_agentic_answer_numbers_are_ground_checked(profile, sales_df, tmp_path, 
     response = _result(events)
     assert "999999" in response.meta["unverified_figures"]
     assert any("not found in computed results" in e.label for e in response.evidence)
-    assert response.meta["grounding_retry_ms"] is not None
+    # `grounding_retry_ms is not None` would also pass on 0 — pin the retry on
+    # the stream event that only a real rewrite emits.
+    assert "delta_reset" in _types(events)
 
 
 def test_agentic_failed_calls_become_warnings_not_errors(profile, sales_df, tmp_path, monkeypatch, tool_stub_chain_factory):
@@ -523,6 +525,82 @@ def test_pipeline_runs_without_artifacts_dir(profile, sales_df, monkeypatch, too
     response = run_analysis_sync(sales_df, profile, request, use_cache=False)
     assert response.error is None
     assert response.plots
+
+
+def test_agentic_grounding_compliant_rewrite_ships_the_clean_answer(profile, sales_df, tmp_path, monkeypatch, tool_stub_chain_factory):
+    """The happy grounding path: a fabricated figure forces a rewrite, the
+    rewrite complies, and the compliant text — not the fabricated one — ships."""
+    totals = sales_df.groupby("region")["revenue"].sum()
+    leader = str(totals.idxmax())
+    compliant = f"{leader} leads with {int(totals.max()):,} in total revenue."
+    tool_stub_chain_factory([
+        _tool_response(_group_call("c1")),
+        _text_response(f"{leader} leads."),
+        _text_response(f"{leader} leads with 999999 dollars, far ahead."),
+        _text_response(compliant),
+    ])
+    request = AnalysisRequest(question="Which region leads?", agentic=True)
+    events = asyncio.run(_collect(
+        sales_df, profile, request, artifacts_dir=tmp_path, use_cache=False
+    ))
+    response = _result(events)
+    assert response.error is None
+    assert "delta_reset" in _types(events)  # the retry actually streamed
+    assert compliant in response.answer
+    assert "999999" not in response.answer
+    assert response.meta["unverified_figures"] == []
+    assert not any("not found in computed results" in e.label for e in response.evidence)
+
+
+def test_agentic_tail_runs_independent_recomputation(profile, sales_df, tmp_path, monkeypatch, tool_stub_chain_factory):
+    """INV-13, negative-summoned: don't just assert `validation.valid` — prove
+    the independent verification code path actually ran on the agentic tail."""
+    from insight.validation import verification
+
+    calls = {"n": 0}
+    real = verification.independently_verify
+
+    def _spy(df, plan, execution):
+        calls["n"] += 1
+        return real(df, plan, execution)
+
+    monkeypatch.setattr(verification, "independently_verify", _spy)
+    tool_stub_chain_factory([
+        _tool_response(_group_call("c1")),
+        _text_response("West leads."),
+        _text_response(AGENTIC_ANSWER),
+    ])
+    request = AnalysisRequest(question="Which region leads?", agentic=True)
+    events = asyncio.run(_collect(
+        sales_df, profile, request, artifacts_dir=tmp_path, use_cache=False
+    ))
+    response = _result(events)
+    assert response.error is None
+    assert calls["n"] >= 1
+
+
+def test_plan_approval_setting_takes_precedence_over_agentic(profile, sales_df, tmp_path, monkeypatch, tool_stub_chain_factory):
+    """INV-14 via the setting (not just the request flag): INSIGHT_PLAN_APPROVAL
+    forces every question down the reviewable planner, agentic flag or not."""
+    from insight.settings import get_settings
+
+    monkeypatch.setenv("INSIGHT_PLAN_APPROVAL", "on")
+    get_settings.cache_clear()
+    try:
+        tool_stub_chain_factory([_text_response(
+            '{"objective":"Revenue by region","steps":[{"step_id":0,'
+            '"operation":"group_aggregate","params":{"group_by":"region",'
+            '"metrics":[{"column":"revenue","agg":"sum","alias":"total_revenue"}]}}]}'
+        )])
+        request = AnalysisRequest(question="Which region leads?", agentic=True)
+        events = asyncio.run(_collect(
+            sales_df, profile, request, artifacts_dir=tmp_path, use_cache=False
+        ))
+        types = _types(events)
+        assert "tool_call" not in types
+        assert "plan_review" in types
+    finally:
+        get_settings.cache_clear()
 
 
 # ---- provider tool-call shapes ----------------------------------------------
