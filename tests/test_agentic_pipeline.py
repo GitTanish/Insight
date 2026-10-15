@@ -654,3 +654,84 @@ def test_anthropic_tools_and_payload_carry_tool_use(profile, sales_df):
     )
     assert tool_msg["content"][0]["type"] == "tool_result"
     assert tool_msg["content"][0]["tool_use_id"] == "toolu_1"
+
+
+def test_openai_wire_shape_for_assistant_tool_calls():
+    """The internal {id, name, arguments} shape must become OpenAI's
+    {id, type: function, function: {name, arguments: json-string}} on the
+    wire — sending the internal shape got a live HTTP 400 from Groq."""
+    import json as _json
+
+    from insight.llm.base import LLMRequest, Message
+    from insight.llm.providers.openai_compat import OpenAICompatibleProvider
+
+    provider = OpenAICompatibleProvider(api_key="test")
+    request = LLMRequest(
+        model="m",
+        messages=[
+            Message(role="user", content="Which region leads?"),
+            Message(role="assistant", content="", tool_calls=[
+                {"id": "call_1", "name": "group_aggregate",
+                 "arguments": {"group_by": "region"}},
+            ]),
+            Message(role="tool", content="| region |",
+                    tool_call_id="call_1", name="group_aggregate"),
+        ],
+        tools=[{"type": "function", "function": {"name": "group_aggregate"}}],
+        tool_choice="auto",
+    )
+    payload = provider._payload(request)
+    call = payload["messages"][1]["tool_calls"][0]
+    assert call["type"] == "function"
+    assert call["id"] == "call_1"
+    assert call["function"]["name"] == "group_aggregate"
+    assert _json.loads(call["function"]["arguments"]) == {"group_by": "region"}
+    assert payload["messages"][2]["tool_call_id"] == "call_1"
+
+
+def test_openai_second_turn_passes_a_strict_wire_validator():
+    """End-to-end through the HTTP layer (MockTransport): the payload of a
+    tool-result round trip is what a strict OpenAI-compatible gateway accepts."""
+    import json as _json
+
+    import httpx
+
+    from insight.llm.base import LLMRequest, Message
+    from insight.llm.providers.openai_compat import OpenAICompatibleProvider
+
+    seen: dict = {}
+
+    def handler(request):
+        body = _json.loads(request.content)
+        for message in body["messages"]:
+            for call in message.get("tool_calls") or []:
+                assert call["type"] == "function"
+                assert isinstance(call["function"]["arguments"], str)
+        seen["body"] = body
+        return httpx.Response(200, json={
+            "model": "m",
+            "choices": [{"message": {"content": "West leads."}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+        })
+
+    class _Provider(OpenAICompatibleProvider):
+        name = "strict-gateway"
+        base_url = "https://strict.test/v1"
+
+    provider = _Provider(api_key="k", transport=httpx.MockTransport(handler))
+    response = asyncio.run(provider.generate(LLMRequest(
+        model="m",
+        messages=[
+            Message(role="user", content="q"),
+            Message(role="assistant", content="", tool_calls=[
+                {"id": "call_1", "name": "group_aggregate",
+                 "arguments": {"group_by": "region"}},
+            ]),
+            Message(role="tool", content="| region |",
+                    tool_call_id="call_1", name="group_aggregate"),
+        ],
+        tools=[{"type": "function", "function": {"name": "group_aggregate"}}],
+        tool_choice="auto",
+    )))
+    assert response.content == "West leads."
+    assert seen["body"]["messages"][1]["tool_calls"][0]["type"] == "function"

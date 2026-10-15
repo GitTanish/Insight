@@ -45,17 +45,6 @@ from evaluation.run_eval import (  # noqa: E402
     score_case,
 )
 
-AGENTIC_SYSTEM = (
-    "You are the analytical core of Insight. You answer a data question by "
-    "calling the available analysis tools ONE AT A TIME. After each tool call "
-    "you receive its real computed result; use it to decide whether to call "
-    "another tool or to write the final answer. Rules: only call tools from "
-    "the provided list; never invent numbers — quote only figures that appear "
-    "in a tool result; use the fewest tools that answer the question. When you "
-    "have enough evidence, reply with a concise final answer citing the "
-    "computed figures."
-)
-
 
 def _response_from_outcome(question: str, outcome) -> Any:
     """Rebuild an AnalysisResponse-shaped object from the loop outcome.
@@ -76,8 +65,10 @@ def _response_from_outcome(question: str, outcome) -> Any:
     error = None
     if outcome.throttled:
         error = "throttled"
-    elif not outcome.tool_results:
-        error = outcome.error or "no_tools_called"
+    elif outcome.error:
+        error = outcome.error
+    elif not any(r.ok for r in outcome.tool_results):
+        error = "no_successful_tool_calls"
     return AnalysisResponse(
         question=question,
         answer=outcome.final_answer,
@@ -118,7 +109,10 @@ def run_agentic_eval(
     artifacts_root: Optional[Path] = None,
     record: bool = False,
 ) -> tuple[int, int, Path]:
+    from insight.analytics.operations import operation_catalog
+    from insight.analytics.sql_engine import DuckSession
     from insight.llm.registry import build_llm_chain
+    from insight.planning.prompts import AGENTIC_SYSTEM, build_agentic_messages
     from insight.profiling.profiler import profile_dataframe
     from insight.settings import get_settings
     from insight.tools.loop import LoopBudget, run_loop
@@ -168,13 +162,31 @@ def run_agentic_eval(
             max_llm_calls=max_llm_calls,
             call_delay_s=delay_s,
         )
-        started = time.monotonic()
-        outcome = asyncio.run(
-            run_loop(
-                case["question"], df, profile, _generate, model_name,
-                budget=budget, system_prompt=AGENTIC_SYSTEM,
-            )
+        # Mirror the production wiring: the agent sees the same system prompt,
+        # operation catalog and DuckDB schema the app gives it, and SQL tool
+        # calls run against a real read-only session instead of failing on a
+        # missing context.
+        table_datasets = {profile.name: df}
+        session = DuckSession(table_datasets) if settings.sql_enabled else None
+        initial_messages = build_agentic_messages(
+            case["question"],
+            profile,
+            operation_catalog(),
+            sql_schema=session.describe() if session is not None else None,
         )
+        started = time.monotonic()
+        try:
+            outcome = asyncio.run(
+                run_loop(
+                    case["question"], df, profile, _generate, model_name,
+                    duck_ctx=session,
+                    budget=budget, system_prompt=AGENTIC_SYSTEM,
+                    initial_messages=initial_messages,
+                )
+            )
+        finally:
+            if session is not None:
+                session.close()
         wall_s = round(time.monotonic() - started, 2)
         response = _response_from_outcome(case["question"], outcome)
         passed, reasons = score_case(response, case)
@@ -186,6 +198,7 @@ def run_agentic_eval(
             "iterations": outcome.iterations,
             "operations_used": outcome.operations_used,
             "throttled": outcome.throttled,
+            "error": outcome.error,
             "prompt_tokens": usage["prompt_tokens"],
             "completion_tokens": usage["completion_tokens"],
             "wall_s": wall_s,
@@ -193,8 +206,9 @@ def run_agentic_eval(
         results.append(record)
         status = "PASS" if passed else "FAIL"
         extra = " [THROTTLED]" if outcome.throttled else ""
+        err = f" error={outcome.error[:80]}" if outcome.error else ""
         print(f"[{case['id']}] {status}{extra} calls={outcome.llm_calls} "
-              f"ops={outcome.operations_used} {reasons if reasons else ''}")
+              f"ops={outcome.operations_used}{err} {reasons if reasons else ''}")
         _write_incremental(artifacts_root, results, model_id)
 
     passed_count = sum(1 for r in results if r["passed"])
