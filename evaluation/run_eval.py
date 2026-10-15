@@ -176,6 +176,7 @@ def run_eval(
                 "reasons": [f"exception: {type(exc).__name__}: {exc}"[:300]],
                 "model_used": None,
             })
+            _write_incremental(artifacts_root, results)
             print(f"[{case['id']}] EXCEPTION {exc}")
             continue
 
@@ -186,12 +187,23 @@ def run_eval(
             "reasons": reasons,
             "model_used": response.meta.get("model"),
             "total_ms": response.meta.get("total_ms"),
+            "llm_calls": response.meta.get("llm_calls"),
+            "prompt_tokens": response.meta.get("prompt_tokens"),
+            "completion_tokens": response.meta.get("completion_tokens"),
         })
+        _write_incremental(artifacts_root, results)
         print(f"[{case['id']}] {'PASS' if passed else 'FAIL'} {reasons if reasons else ''}")
 
     passed_count = sum(1 for r in results if r["passed"])
     report_path = write_report(results, passed_count, len(results), model_id, artifacts_root)
     return passed_count, len(results), report_path
+
+
+def _write_incremental(root: Path, results: list[dict]) -> None:
+    """Case-by-case results so partial runs still produce analysable data."""
+    (root / "results.json").write_text(
+        json.dumps(results, indent=2, default=str), encoding="utf-8"
+    )
 
 
 def write_report(

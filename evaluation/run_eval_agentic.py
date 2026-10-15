@@ -27,6 +27,7 @@ import asyncio
 import datetime
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -115,6 +116,7 @@ def run_agentic_eval(
     max_iterations: int = 3,
     max_llm_calls: int = 6,
     artifacts_root: Optional[Path] = None,
+    record: bool = False,
 ) -> tuple[int, int, Path]:
     from insight.llm.registry import build_llm_chain
     from insight.profiling.profiler import profile_dataframe
@@ -138,6 +140,8 @@ def run_agentic_eval(
     frames: dict[str, tuple[pd.DataFrame, Any]] = {}
     results: list[dict] = []
 
+    transcript = (artifacts_root / "transcript.jsonl") if record else None
+
     for case in cases:
         name = case["dataset"]
         if name not in frames:
@@ -148,20 +152,30 @@ def run_agentic_eval(
 
         print(f"[{case['id']}] agentic ask: {case['question'][:64]}...")
 
+        usage = {"seq": 0, "prompt_tokens": 0, "completion_tokens": 0}
+
         async def _generate(request, _chain=chain):
-            return await _run_chain(_chain, request)
+            response = await _run_chain(_chain, request)
+            usage["seq"] += 1
+            usage["prompt_tokens"] += response.prompt_tokens or 0
+            usage["completion_tokens"] += response.completion_tokens or 0
+            if transcript is not None:
+                _append_transcript(transcript, case["id"], usage["seq"], request, response)
+            return response
 
         budget = LoopBudget(
             max_iterations=max_iterations,
             max_llm_calls=max_llm_calls,
             call_delay_s=delay_s,
         )
+        started = time.monotonic()
         outcome = asyncio.run(
             run_loop(
                 case["question"], df, profile, _generate, model_name,
                 budget=budget, system_prompt=AGENTIC_SYSTEM,
             )
         )
+        wall_s = round(time.monotonic() - started, 2)
         response = _response_from_outcome(case["question"], outcome)
         passed, reasons = score_case(response, case)
         record = {
@@ -172,6 +186,9 @@ def run_agentic_eval(
             "iterations": outcome.iterations,
             "operations_used": outcome.operations_used,
             "throttled": outcome.throttled,
+            "prompt_tokens": usage["prompt_tokens"],
+            "completion_tokens": usage["completion_tokens"],
+            "wall_s": wall_s,
         }
         results.append(record)
         status = "PASS" if passed else "FAIL"
@@ -190,6 +207,18 @@ def run_agentic_eval(
     return passed_count, len(results), report
 
 
+def _append_transcript(path: Path, case_id: str, seq: int, request, response) -> None:
+    """Append one raw provider exchange to the record/replay transcript."""
+    line = {
+        "case": case_id,
+        "seq": seq,
+        "request": request.model_dump(),
+        "response": response.model_dump(),
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, default=str) + "\n")
+
+
 def _write_incremental(root: Path, results: list[dict], model_id: Optional[str]) -> None:
     (root / "results.json").write_text(
         json.dumps(results, indent=2, default=str), encoding="utf-8"
@@ -204,9 +233,11 @@ def _write_report(results, passed, total, model_id, artifacts_root) -> Path:
         f"- model: `{model_id or '(default)'}`",
         f"- result: **{passed}/{total} passed**",
         f"- total llm_calls: {sum(r.get('llm_calls', 0) for r in results)}",
+        f"- total tokens: in={sum(r.get('prompt_tokens', 0) for r in results)} "
+        f"out={sum(r.get('completion_tokens', 0) for r in results)}",
         "",
-        "| id | dataset | status | llm_calls | ops | notes |",
-        "|---|---|---|---|---|---|",
+        "| id | dataset | status | llm_calls | tokens in/out | wall_s | ops | notes |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
         status = "PASS" if r["passed"] else "FAIL"
@@ -215,6 +246,8 @@ def _write_report(results, passed, total, model_id, artifacts_root) -> Path:
         notes = "; ".join(r.get("reasons", [])) or "—"
         lines.append(
             f"| {r['id']} | {r['dataset']} | {status} | {r.get('llm_calls')} "
+            f"| {r.get('prompt_tokens', '?')}/{r.get('completion_tokens', '?')} "
+            f"| {r.get('wall_s', '?')} "
             f"| {','.join(r.get('operations_used', []))} | {notes} |"
         )
     path = artifacts_root / "report.md"
@@ -231,11 +264,13 @@ def main() -> int:
                         help="seconds between provider calls (throttle safety)")
     parser.add_argument("--max-iterations", type=int, default=3)
     parser.add_argument("--max-llm-calls", type=int, default=6)
+    parser.add_argument("--record", action="store_true",
+                        help="also write every raw provider exchange to transcript.jsonl")
     args = parser.parse_args()
     passed, total, _ = run_agentic_eval(
         model_id=args.model, limit=args.limit, dataset_filter=args.dataset,
         delay_s=args.delay, max_iterations=args.max_iterations,
-        max_llm_calls=args.max_llm_calls,
+        max_llm_calls=args.max_llm_calls, record=args.record,
     )
     return 0 if passed == total else 1
 
