@@ -146,13 +146,15 @@ def run_agentic_eval(
 
         print(f"[{case['id']}] agentic ask: {case['question'][:64]}...")
 
-        usage = {"seq": 0, "prompt_tokens": 0, "completion_tokens": 0}
+        usage = {"seq": 0, "prompt_tokens": 0, "completion_tokens": 0, "models": set()}
 
         async def _generate(request, _chain=chain):
             response = await _run_chain(_chain, request)
             usage["seq"] += 1
             usage["prompt_tokens"] += response.prompt_tokens or 0
             usage["completion_tokens"] += response.completion_tokens or 0
+            if response.model:
+                usage["models"].add(response.model)
             if transcript is not None:
                 _append_transcript(transcript, case["id"], usage["seq"], request, response)
             return response
@@ -201,6 +203,7 @@ def run_agentic_eval(
             "error": outcome.error,
             "prompt_tokens": usage["prompt_tokens"],
             "completion_tokens": usage["completion_tokens"],
+            "models_used": sorted(usage["models"]),
             "wall_s": wall_s,
         }
         results.append(record)
