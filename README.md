@@ -89,7 +89,7 @@ question → [call op → read real computed result] ×n → final answer
 - **Chart planning is deterministic in this mode:** the two most recent table-producing steps are rendered with the same editorial rules, and any bad chart spec is rejected by the ordinary validator rather than trusted.
 - Provider-agnostic: OpenAI-shaped tools on every OpenAI-compatible endpoint, Anthropic-shaped tools when the chain's primary provider is Anthropic.
 - `INSIGHT_PLAN_APPROVAL=on` (or `plan_only`) takes precedence: that gate needs a reviewable plan before anything executes, so those requests use the single-shot planner.
-- Benchmark it against the single-shot planner with the same golden cases and grader: `python evaluation/run_eval_agentic.py --model groq/openai/gpt-oss-120b` (live, needs a key). The agentic path is covered offline by the fake-LLM suite; it has not been live-benchmarked.
+- Benchmark it against the single-shot planner with the same golden cases and grader — `python evaluation/run_eval_agentic.py --model <id> --record` — then aggregate k repetitions per arm with `evaluation/ab_stats.py`. The first live runs of this harness immediately paid for themselves: they exposed an OpenAI wire-format bug in the assistant tool-call history that no scripted fake could see (every second turn of an agentic run was a hard HTTP 400; fixed and pinned by tests).
 
 ---
 
@@ -126,7 +126,7 @@ It registers the CSVs as DuckDB tables, runs each monitor's query through the *s
 - **Headless JSON API** — `POST /api/query` exposes the same verified pipeline for scripts and integrations. Send `plan_only: true` to get a reviewable plan back instead of an answer, or `agentic: true` for one tool-calling run.
 - **Query-result cache** — identical (dataset hash, question, model, temperature, session state) hits are served from `.artifacts/cache/` with TTL + size-budget eviction (`INSIGHT_QUERY_CACHE=off` to disable). Serves the streaming UI path too: ~20× faster on repeats.
 - **Prefix-cached prompts** — the planner's system prompt stays byte-stable per dataset (per-turn state lives in later messages, not the prefix), so providers serve it from their prompt cache. Reported as `cached_prompt_tokens`.
-- **Golden-question eval harness** — 20 seeded/real benchmark cases (incl. the 54K-row diamonds dataset and a 250K-row synthetic retail set) with exact ground truth; `python evaluation/run_eval.py --model <id>` produces a per-case PASS/FAIL markdown report.
+- **Golden-question eval harness** — 20 seeded/real benchmark cases (incl. the 54K-row diamonds dataset and a 250K-row synthetic retail set) with exact ground truth; `evaluation/run_eval.py` scores the single-shot path, `run_eval_agentic.py` runs the same cases and grader through the agentic loop (token/wall/model telemetry, optional raw transcripts via `--record`), and `ab_stats.py` aggregates k repetitions into per-case pass counts and Wilson CIs.
 - **Observability** — optional LangSmith tracing of every plan, step, and LLM call.
 
 ---
@@ -241,6 +241,26 @@ python evaluation/run_eval.py --model groq/openai/gpt-oss-120b
 # → per-case PASS/FAIL + markdown report under .artifacts/eval/
 ```
 
+The agentic loop has a matching runner over the **same cases and the same grader**:
+
+```bash
+python evaluation/run_eval_agentic.py --model groq/openai/gpt-oss-120b --record
+# → same pass/fail, plus cost telemetry: llm_calls, prompt/completion tokens,
+#   wall_s, whether the run was throttled, and which models actually served
+#   the calls (fallback-chain use is visible in the data, never silent)
+#   --record keeps every raw request/response as transcript.jsonl for replay
+```
+
+Aggregate repeated runs into publishable A/B numbers:
+
+```bash
+python evaluation/ab_stats.py --agentic DIR1,DIR2,DIR3 --baseline DIR4,DIR5,DIR6
+# → per-case passes/k, overall pass rate with a 95% Wilson CI, mean llm_calls
+#   and wall time, token totals, throttled counts, failure-reason rollup
+```
+
+Handy flags: `--limit N`, `--dataset sales.csv`, `--delay S` (spacing between provider calls to stay under free-tier TPM), `--max-iterations`/`--max-llm-calls` (eval default 3/6 for cheap smokes; the app ships 5/9). Results are written incrementally, so an interrupted or throttled run still yields analysable data.
+
 Real-world runs are recorded in [evaluation/REAL_WORLD_LOG.md](evaluation/REAL_WORLD_LOG.md):
 the question battery, ops executed per answer, timings, grounding flags, plus an
 independent ground-truth verification section (including the data-quality traps the
@@ -260,12 +280,23 @@ Insight is **model-agnostic**: every provider sits behind one `LLMProvider` inte
 | **Anthropic** | `ANTHROPIC_API_KEY` | Claude models + live discovery |
 | **OpenRouter** | `OPENROUTER_API_KEY` | 400+ aggregated models, curated discovery |
 | **Ollama** (local) | `OLLAMA_BASE_URL` or `INSIGHT_ENABLE_OLLAMA=1` | whatever you have pulled |
-| **Any OpenAI-compatible service** | `INSIGHT_CUSTOM_BASE_URL` + `INSIGHT_CUSTOM_API_KEY` (+ `INSIGHT_CUSTOM_MODELS`) | DeepSeek, Together, Fireworks, vLLM, LM Studio… |
+| **Any OpenAI-compatible service** | `INSIGHT_CUSTOM_BASE_URL` + `INSIGHT_CUSTOM_API_KEY` (+ `INSIGHT_CUSTOM_MODELS`) | NVIDIA NIM, DeepSeek, Together, Fireworks, vLLM, LM Studio… |
 
 See [.env.example](.env.example) for the full template. Model capabilities (JSON mode, reasoning effort) are declared per model; the orchestrator strips unsupported parameters automatically and falls back across providers when a 429/5xx hits. Copy `.env.example` to `.env` and fill in what you have:
 
 ```bash
 cp .env.example .env
+```
+
+Example — NVIDIA NIM (40 req/min, tool calling included):
+
+```bash
+INSIGHT_CUSTOM_NAME=nvidia
+INSIGHT_CUSTOM_BASE_URL=https://integrate.api.nvidia.com/v1
+INSIGHT_CUSTOM_API_KEY=nvapi-...
+INSIGHT_CUSTOM_MODELS=openai/gpt-oss-20b
+# then use it anywhere a model id is accepted:
+# python evaluation/run_eval_agentic.py --model nvidia/openai/gpt-oss-20b
 ```
 
 ---
@@ -321,9 +352,9 @@ main.py                  Streamlit entry point (legacy UI, same engine)
 │   ├── reports/         shared DOCX builder + dbt/alert artifact generators
 │   ├── visualization/   Editorial theme + chart renderer from ChartSpec
 │   └── orchestrator.py  plan → execute → validate → repair → render → explain (+ streaming variant)
-├── evaluation/          golden-question harness: generator, 20 cases, scorer/reporter
+├── evaluation/          golden-question harness: generator, 20 cases, single-shot + agentic runners, k-rep aggregator, scorer/reporter
 ├── tools/               companion workers (alert_runner: cron → DuckDB → webhook)
-└── tests/               pytest suite (fake LLM, zero network needed)
+└── tests/               pytest suite (fake LLM + adversarial agentic suite, zero network needed)
 ```
 
 The `insight/` package is deliberately UI-agnostic — both front-ends call it through one function. The FastAPI app additionally exposes the pipeline as an SSE stream and a JSON API, so CLIs and future clients reuse the exact same verified engine.
@@ -394,6 +425,8 @@ Still, aggregates and schemas leave your machine: whatever you ask, the numbers 
 
 **Rate limit errors** — Groq free tier allows 30 requests/min on gpt-oss models. Wait a moment, switch to `gpt-oss-20b`, or add a Mistral key for fallback.
 
+**Agentic runs feel slow on free tiers** — each turn re-sends the tool history, and Groq's free TPM can spend minutes in silent retry backoff before a call succeeds (the outcome reports `throttled=0`; the wall clock tells the truth). Space calls (`--delay` in the eval runners, `INSIGHT_AGENTIC_DELAY_S` in the app), keep budgets sane, or point a higher-limit endpoint at `INSIGHT_CUSTOM_*` (e.g. NVIDIA NIM).
+
 **Charts not appearing** — check the `.artifacts/web/<session>/` folder is writable; render warnings appear under answers.
 
 **Slow first load** — provider model catalogs are scanned on startup (~10s, cached); the dataset profile and briefing compute once per upload.
@@ -419,14 +452,14 @@ Tracing is fully optional — with no key the engine runs identically and posts 
 
 ## Roadmap
 
-Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · token-by-token answer streaming & prefix caching ✅ · human-in-the-loop plan approval ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction (API & SSE streaming paths) ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅ · agentic tool-use mode + alert-runner companion worker ✅
+Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · token-by-token answer streaming & prefix caching ✅ · human-in-the-loop plan approval ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction (API & SSE streaming paths) ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅ · agentic tool-use mode + alert-runner companion worker ✅ · agentic A/B eval harness + k-rep aggregator ✅
 
 **Up next** (detailed notes in [HANDOVER.md](HANDOVER.md) and [future_scope.md](future_scope.md)):
 
 - External session storage (Redis / Valkey) for multi-worker deployments
 - Live database connections (read-only SQLite/Postgres DSN connectors)
 - MAR/MNAR-aware missingness diagnostics (currently MCAR assumption is surfaced as a caveat)
-- Live A/B evaluation benchmark for agentic mode against golden cases (`run_eval_agentic.py`)
+- Published k≥3 agentic-vs-single-shot A/B numbers (harness, transcript recording and aggregator already landed)
 
 *Explicitly deferred per architectural decision:* Python code-interpreter sandboxing (DuckDB covers relational analytics safely), auth / multi-user, PDF export, and persistent dashboards.
 

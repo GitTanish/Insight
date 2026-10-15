@@ -50,11 +50,16 @@ The query-result cache now serves the SSE path too (~0.23-0.39s repeats vs
 same sandboxed DuckSession and posts Slack-compatible payloads on threshold
 state-change (see README "Alert runner").
 
-### 6. Agentic mode — shipped, live A/B still open
+### 6. Agentic mode — shipped; live A/B in progress
 `INSIGHT_AGENTIC` routes questions through the tool-calling loop
 (`insight/tools/`) with the same verification tail. The loop is offline-tested;
-the A/B harness against golden cases (`evaluation/run_eval_agentic.py`) has not
-been re-run on a fresh quota. Sweet spots worth measuring next: whether agentic
+the live A/B harness (`evaluation/run_eval_agentic.py`) has now run against real
+quota — its first runs found and fixed an OpenAI wire-format bug in the
+tool-call history that no offline fake could reach. First results: 17/20 at the
+smoke budget (3/6, failures are iteration caps), 10/10 at the production budget
+(5/9) before free-tier TPM backoff stopped the run; full k≥3 aggregation
+(`evaluation/ab_stats.py`) awaits a higher-quota endpoint (NVIDIA NIM is wired
+via `INSIGHT_CUSTOM_*`). Sweet spots worth measuring next: whether agentic
 recovers more first-pass plans (fewer repairs) vs single-shot at similar LLM
 call counts, and whether a System One op-classifier router can cut calls
 further (the `OperationRouter` seam is in place).
