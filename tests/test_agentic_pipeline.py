@@ -198,6 +198,26 @@ def test_loop_rejects_input_step_pointing_nowhere(profile, sales_df):
     assert "input_step 42" in out.tool_results[0].content
 
 
+def test_filter_rows_narrows_working_frame_for_later_calls(profile, sales_df):
+    # Implicit chaining: without input_step, filter_rows narrows the working
+    # row-set that later calls run on (loop.py `working = result.frame`).
+    router = _ScriptedRouter([
+        {"tool_calls": [RuntimeToolCall(id="a", name="filter_rows", arguments={
+            "column": "region", "op": "eq", "value": "West",
+        })]},
+        {"tool_calls": [RuntimeToolCall(id="b", name="group_aggregate", arguments={
+            "group_by": "region",
+            "metrics": [{"column": "revenue", "agg": "sum", "alias": "total_revenue"}],
+        })]},
+    ])
+    out = asyncio.run(run_loop("q", sales_df, profile, None, "m", router=router))
+    assert out.success
+    table = out.tool_results[1].table
+    assert [row[0] for row in table.rows] == ["West"]
+    west_total = float(sales_df.loc[sales_df["region"] == "West", "revenue"].sum())
+    assert abs(float(table.rows[0][1]) - west_total) < 0.01
+
+
 def test_loop_stops_after_repeated_identical_failure(profile, sales_df):
     class _Broken:
         async def next_action(self, state):
@@ -735,3 +755,77 @@ def test_openai_second_turn_passes_a_strict_wire_validator():
     )))
     assert response.content == "West leads."
     assert seen["body"]["messages"][1]["tool_calls"][0]["type"] == "function"
+
+
+def test_openai_inbound_tool_call_parsing_variants():
+    """The server->domain direction: wire tool_calls become internal
+    {id, name, arguments} objects, tolerating string/dict/blank arguments and
+    skipping nameless or unparseable entries."""
+    import json as _json
+
+    import httpx
+
+    from insight.llm.base import LLMRequest
+    from insight.llm.providers.openai_compat import OpenAICompatibleProvider
+
+    def handler(request):
+        return httpx.Response(200, json={
+            "model": "m",
+            "choices": [{"message": {
+                "content": "",
+                "tool_calls": [
+                    {"id": "1", "type": "function", "function": {
+                        "name": "group_aggregate",
+                        "arguments": _json.dumps({"group_by": "region"})}},
+                    {"id": "2", "type": "function", "function": {
+                        "name": "top_n", "arguments": {"n": 2}}},
+                    {"id": "3", "type": "function", "function": {
+                        "name": "value_counts", "arguments": "   "}},
+                    {"id": "4", "type": "function", "function": {
+                        "name": "broken_json", "arguments": "{oops"}},
+                    {"id": "5", "type": "function", "function": {}},
+                    {"id": "6", "type": "function", "function": {
+                        "name": "numeric_args", "arguments": 123}},
+                ],
+            }}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        })
+
+    class _Provider(OpenAICompatibleProvider):
+        name = "inbound-test"
+        base_url = "https://inbound.test/v1"
+
+    provider = _Provider(api_key="k", transport=httpx.MockTransport(handler))
+    response = asyncio.run(provider.generate(LLMRequest(model="m", messages=[])))
+    calls = response.tool_calls
+    assert [c.name for c in calls] == [
+        "group_aggregate", "top_n", "value_counts", "broken_json",
+        "numeric_args",
+    ]
+    assert calls[0].arguments == {"group_by": "region"}
+    assert calls[1].arguments == {"n": 2}
+    assert calls[2].arguments == {}
+    assert calls[3].arguments == {}
+    assert calls[4].arguments == {}
+
+
+def test_openai_malformed_response_raises_provider_error():
+    import httpx
+
+    from insight.domain.errors import ProviderError
+    from insight.llm.base import LLMRequest
+    from insight.llm.providers.openai_compat import OpenAICompatibleProvider
+
+    class _Provider(OpenAICompatibleProvider):
+        name = "malformed-test"
+        base_url = "https://malformed.test/v1"
+
+    provider = _Provider(
+        api_key="k",
+        max_retries=1,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"oops": 1})
+        ),
+    )
+    with pytest.raises(ProviderError, match="malformed response"):
+        asyncio.run(provider.generate(LLMRequest(model="m", messages=[])))
