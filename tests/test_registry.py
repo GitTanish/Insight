@@ -19,10 +19,12 @@ def settings_with(**keys):
 
     isolated = {
         "groq_api_key": None,
+        "groq2_api_key": None,
         "mistral_api_key": None,
         "openai_api_key": None,
         "anthropic_api_key": None,
         "openrouter_api_key": None,
+        "nvidia_api_key": None,
         "ollama_base_url": None,
         "enable_ollama": False,
         "custom_base_url": None,
@@ -110,3 +112,54 @@ def test_static_catalog_contains_curated_entries():
     assert MODEL_CATALOG["groq/openai/gpt-oss-120b"].supports_reasoning_effort
     assert "mistral/mistral-small-latest" in MODEL_CATALOG
     assert DISCOVERED.get("nonexistent") is None
+
+
+def test_nvidia_provider_curated_model_and_endpoint():
+    s = settings_with(nvidia_api_key="nvapi-test")
+    models = available_models(s)
+    assert "nvidia/openai/gpt-oss-20b" in {m.model_id for m in models}
+    provider = create_provider("nvidia", s)
+    assert provider.name == "nvidia"
+    assert provider.base_url == "https://integrate.api.nvidia.com/v1"
+    # Without this flag the orchestrator strips reasoning_effort and NIM's
+    # gpt-oss-20b defaults to verbose reasoning that exhausts the planner's
+    # max_tokens budget without ever emitting content (diagnosed 2026-10-17).
+    assert MODEL_CATALOG["nvidia/openai/gpt-oss-20b"].supports_reasoning_effort
+
+
+def test_groq2_second_account_alias():
+    s = settings_with(groq2_api_key="gsk-second")
+    models = available_models(s)
+    assert "groq2/openai/gpt-oss-120b" in {m.model_id for m in models}
+    provider = create_provider("groq2", s)
+    assert provider.name == "groq2"
+    assert provider.base_url == "https://api.groq.com/openai/v1"
+
+
+def test_build_llm_chain_excludes_keyless_providers():
+    s = settings_with(groq_api_key="k")
+    _, chain = build_llm_chain("groq/openai/gpt-oss-120b", s)
+    assert {p.name for p, _, _ in chain} == {"groq"}
+
+    both = settings_with(groq_api_key="k", groq2_api_key="k2")
+    _, chain = build_llm_chain("groq/openai/gpt-oss-120b", both)
+    assert {m.model_id for _, _, m in chain} >= {
+        "groq/openai/gpt-oss-120b", "groq2/openai/gpt-oss-120b",
+    }
+
+
+def test_byok_api_key_keeps_keyless_providers_in_chain():
+    s = settings_with()
+    _, chain = build_llm_chain("groq/openai/gpt-oss-120b", s, api_key="sk-visitor")
+    assert len(chain) > 1
+    assert chain[0][0].name == "groq"
+
+
+def test_no_fallback_pins_chain_to_primary_model():
+    s = settings_with(groq_api_key="k", mistral_api_key="k2", openrouter_api_key="k3")
+    primary, chain = build_llm_chain(
+        "mistral/mistral-small-latest", s, no_fallback=True
+    )
+    assert primary.provider == "mistral"
+    assert len(chain) == 1
+    assert chain[0][2].model_id == primary.model_id

@@ -89,8 +89,17 @@ class _Chain:
                 if not (response.content or "").strip() and not (
                     response.tool_calls or []
                 ):
+                    hint = ""
+                    if (
+                        effective.max_tokens
+                        and response.completion_tokens == effective.max_tokens
+                    ):
+                        hint = (
+                            f" (hit max_tokens={effective.max_tokens}; the model "
+                            "likely spent the whole budget on internal reasoning)"
+                        )
                     raise InsightError(
-                        f"{provider.name}/{model} returned empty content"
+                        f"{provider.name}/{model} returned empty content{hint}"
                     )
                 self.last_used = f"{provider.name}/{model}"
                 self.llm_calls += 1
@@ -170,9 +179,12 @@ def _build_chain_for(
     model_id: Optional[str],
     temperature: float,
     api_key: Optional[str] = None,
+    no_fallback: bool = False,
 ) -> _Chain:
     _, entries = build_llm_chain(
-        model_id or get_settings().default_model_id, api_key=api_key
+        model_id or get_settings().default_model_id,
+        api_key=api_key,
+        no_fallback=no_fallback,
     )
     return _Chain(entries=entries, temperature=temperature, reasoning_effort=get_settings().reasoning_effort)
 
@@ -695,6 +707,7 @@ async def analyze_stream(
         request.model_id,
         settings.temperature if request.temperature is None else request.temperature,
         api_key=request.api_key,
+        no_fallback=request.no_fallback,
     )
     attach_metadata(
         dataset_id=profile.fingerprint.dataset_id,

@@ -28,12 +28,43 @@ class OpenAICompatibleProvider(LLMProvider):
             "Content-Type": "application/json",
         }
 
+    @staticmethod
+    def _wire_tool_call(tc: dict) -> dict:
+        """One assistant tool call in OpenAI wire shape.
+
+        The internal model stores {id, name, arguments: dict}; the wire format
+        requires {id, type: "function", function: {name, arguments: <json
+        string>}}. Sending the internal shape verbatim is rejected by real
+        providers (Groq: 400 "'tool_calls.0.type' is missing") — which broke
+        the second agentic turn on every OpenAI-compatible provider, a failure
+        no offline scripted-LLM test could see because tool turns never crossed
+        the provider wire layer until the first live multi-turn run.
+        """
+        args = tc.get("arguments")
+        return {
+            "id": tc.get("id") or "",
+            "type": "function",
+            "function": {
+                "name": tc.get("name") or "",
+                "arguments": args if isinstance(args, str) else json.dumps(args or {}),
+            },
+        }
+
+    def _wire_messages(self, messages) -> list[dict]:
+        wire: list[dict] = []
+        for message in messages:
+            dumped = message.model_dump(exclude_none=True)
+            if dumped.get("role") == "assistant" and dumped.get("tool_calls"):
+                dumped["tool_calls"] = [
+                    self._wire_tool_call(tc) for tc in dumped["tool_calls"]
+                ]
+            wire.append(dumped)
+        return wire
+
     def _payload(self, request: LLMRequest) -> dict:
         payload: dict = {
             "model": request.model,
-            "messages": [
-                m.model_dump(exclude_none=True) for m in request.messages
-            ],
+            "messages": self._wire_messages(request.messages),
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
@@ -135,6 +166,11 @@ class OpenAICompatibleProvider(LLMProvider):
         for raw in message.get("tool_calls") or []:
             fn = raw.get("function") or {}
             name = fn.get("name")
+            if not name:
+                continue
+            # gpt-oss models occasionally leak harmony control tokens into the
+            # wire name ("op<|channel|>commentary"); strip from the first "<|".
+            name = name.split("<|", 1)[0].strip()
             if not name:
                 continue
             args_raw = fn.get("arguments")

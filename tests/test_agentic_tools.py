@@ -189,7 +189,7 @@ def test_loop_respects_llm_call_budget(profile, sales_df):
         run_loop("q", sales_df, profile, None, "m", router=_GreedyRouter(),
                  budget=LoopBudget(max_iterations=10, max_llm_calls=2))
     )
-    assert out.llm_calls <= 2
+    assert out.llm_calls == 2  # exactly the cap, not fewer — `<=` would hide a no-op loop
     assert out.error == "llm_call_budget_exhausted"
 
 

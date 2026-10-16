@@ -15,6 +15,9 @@ class Settings(BaseModel):
     groq_api_key: str | None = Field(
         default_factory=lambda: os.getenv("GROQ_API_KEY") or None
     )
+    groq2_api_key: str | None = Field(
+        default_factory=lambda: os.getenv("GROQ_API_KEY2") or None
+    )
     mistral_api_key: str | None = Field(
         default_factory=lambda: os.getenv("MISTRAL_API_KEY") or None
     )
@@ -26,6 +29,9 @@ class Settings(BaseModel):
     )
     openrouter_api_key: str | None = Field(
         default_factory=lambda: os.getenv("OPENROUTER_API_KEY") or None
+    )
+    nvidia_api_key: str | None = Field(
+        default_factory=lambda: os.getenv("NVIDIA_API_KEY") or None
     )
     ollama_base_url: str | None = Field(
         default_factory=lambda: os.getenv("OLLAMA_BASE_URL") or None

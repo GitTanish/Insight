@@ -198,6 +198,26 @@ def test_loop_rejects_input_step_pointing_nowhere(profile, sales_df):
     assert "input_step 42" in out.tool_results[0].content
 
 
+def test_filter_rows_narrows_working_frame_for_later_calls(profile, sales_df):
+    # Implicit chaining: without input_step, filter_rows narrows the working
+    # row-set that later calls run on (loop.py `working = result.frame`).
+    router = _ScriptedRouter([
+        {"tool_calls": [RuntimeToolCall(id="a", name="filter_rows", arguments={
+            "column": "region", "op": "eq", "value": "West",
+        })]},
+        {"tool_calls": [RuntimeToolCall(id="b", name="group_aggregate", arguments={
+            "group_by": "region",
+            "metrics": [{"column": "revenue", "agg": "sum", "alias": "total_revenue"}],
+        })]},
+    ])
+    out = asyncio.run(run_loop("q", sales_df, profile, None, "m", router=router))
+    assert out.success
+    table = out.tool_results[1].table
+    assert [row[0] for row in table.rows] == ["West"]
+    west_total = float(sales_df.loc[sales_df["region"] == "West", "revenue"].sum())
+    assert abs(float(table.rows[0][1]) - west_total) < 0.01
+
+
 def test_loop_stops_after_repeated_identical_failure(profile, sales_df):
     class _Broken:
         async def next_action(self, state):
@@ -381,7 +401,9 @@ def test_agentic_answer_numbers_are_ground_checked(profile, sales_df, tmp_path, 
     response = _result(events)
     assert "999999" in response.meta["unverified_figures"]
     assert any("not found in computed results" in e.label for e in response.evidence)
-    assert response.meta["grounding_retry_ms"] is not None
+    # `grounding_retry_ms is not None` would also pass on 0 — pin the retry on
+    # the stream event that only a real rewrite emits.
+    assert "delta_reset" in _types(events)
 
 
 def test_agentic_failed_calls_become_warnings_not_errors(profile, sales_df, tmp_path, monkeypatch, tool_stub_chain_factory):
@@ -525,6 +547,82 @@ def test_pipeline_runs_without_artifacts_dir(profile, sales_df, monkeypatch, too
     assert response.plots
 
 
+def test_agentic_grounding_compliant_rewrite_ships_the_clean_answer(profile, sales_df, tmp_path, monkeypatch, tool_stub_chain_factory):
+    """The happy grounding path: a fabricated figure forces a rewrite, the
+    rewrite complies, and the compliant text — not the fabricated one — ships."""
+    totals = sales_df.groupby("region")["revenue"].sum()
+    leader = str(totals.idxmax())
+    compliant = f"{leader} leads with {int(totals.max()):,} in total revenue."
+    tool_stub_chain_factory([
+        _tool_response(_group_call("c1")),
+        _text_response(f"{leader} leads."),
+        _text_response(f"{leader} leads with 999999 dollars, far ahead."),
+        _text_response(compliant),
+    ])
+    request = AnalysisRequest(question="Which region leads?", agentic=True)
+    events = asyncio.run(_collect(
+        sales_df, profile, request, artifacts_dir=tmp_path, use_cache=False
+    ))
+    response = _result(events)
+    assert response.error is None
+    assert "delta_reset" in _types(events)  # the retry actually streamed
+    assert compliant in response.answer
+    assert "999999" not in response.answer
+    assert response.meta["unverified_figures"] == []
+    assert not any("not found in computed results" in e.label for e in response.evidence)
+
+
+def test_agentic_tail_runs_independent_recomputation(profile, sales_df, tmp_path, monkeypatch, tool_stub_chain_factory):
+    """INV-13, negative-summoned: don't just assert `validation.valid` — prove
+    the independent verification code path actually ran on the agentic tail."""
+    from insight.validation import verification
+
+    calls = {"n": 0}
+    real = verification.independently_verify
+
+    def _spy(df, plan, execution):
+        calls["n"] += 1
+        return real(df, plan, execution)
+
+    monkeypatch.setattr(verification, "independently_verify", _spy)
+    tool_stub_chain_factory([
+        _tool_response(_group_call("c1")),
+        _text_response("West leads."),
+        _text_response(AGENTIC_ANSWER),
+    ])
+    request = AnalysisRequest(question="Which region leads?", agentic=True)
+    events = asyncio.run(_collect(
+        sales_df, profile, request, artifacts_dir=tmp_path, use_cache=False
+    ))
+    response = _result(events)
+    assert response.error is None
+    assert calls["n"] >= 1
+
+
+def test_plan_approval_setting_takes_precedence_over_agentic(profile, sales_df, tmp_path, monkeypatch, tool_stub_chain_factory):
+    """INV-14 via the setting (not just the request flag): INSIGHT_PLAN_APPROVAL
+    forces every question down the reviewable planner, agentic flag or not."""
+    from insight.settings import get_settings
+
+    monkeypatch.setenv("INSIGHT_PLAN_APPROVAL", "on")
+    get_settings.cache_clear()
+    try:
+        tool_stub_chain_factory([_text_response(
+            '{"objective":"Revenue by region","steps":[{"step_id":0,'
+            '"operation":"group_aggregate","params":{"group_by":"region",'
+            '"metrics":[{"column":"revenue","agg":"sum","alias":"total_revenue"}]}}]}'
+        )])
+        request = AnalysisRequest(question="Which region leads?", agentic=True)
+        events = asyncio.run(_collect(
+            sales_df, profile, request, artifacts_dir=tmp_path, use_cache=False
+        ))
+        types = _types(events)
+        assert "tool_call" not in types
+        assert "plan_review" in types
+    finally:
+        get_settings.cache_clear()
+
+
 # ---- provider tool-call shapes ----------------------------------------------
 
 
@@ -576,3 +674,164 @@ def test_anthropic_tools_and_payload_carry_tool_use(profile, sales_df):
     )
     assert tool_msg["content"][0]["type"] == "tool_result"
     assert tool_msg["content"][0]["tool_use_id"] == "toolu_1"
+
+
+def test_openai_wire_shape_for_assistant_tool_calls():
+    """The internal {id, name, arguments} shape must become OpenAI's
+    {id, type: function, function: {name, arguments: json-string}} on the
+    wire — sending the internal shape got a live HTTP 400 from Groq."""
+    import json as _json
+
+    from insight.llm.base import LLMRequest, Message
+    from insight.llm.providers.openai_compat import OpenAICompatibleProvider
+
+    provider = OpenAICompatibleProvider(api_key="test")
+    request = LLMRequest(
+        model="m",
+        messages=[
+            Message(role="user", content="Which region leads?"),
+            Message(role="assistant", content="", tool_calls=[
+                {"id": "call_1", "name": "group_aggregate",
+                 "arguments": {"group_by": "region"}},
+            ]),
+            Message(role="tool", content="| region |",
+                    tool_call_id="call_1", name="group_aggregate"),
+        ],
+        tools=[{"type": "function", "function": {"name": "group_aggregate"}}],
+        tool_choice="auto",
+    )
+    payload = provider._payload(request)
+    call = payload["messages"][1]["tool_calls"][0]
+    assert call["type"] == "function"
+    assert call["id"] == "call_1"
+    assert call["function"]["name"] == "group_aggregate"
+    assert _json.loads(call["function"]["arguments"]) == {"group_by": "region"}
+    assert payload["messages"][2]["tool_call_id"] == "call_1"
+
+
+def test_openai_second_turn_passes_a_strict_wire_validator():
+    """End-to-end through the HTTP layer (MockTransport): the payload of a
+    tool-result round trip is what a strict OpenAI-compatible gateway accepts."""
+    import json as _json
+
+    import httpx
+
+    from insight.llm.base import LLMRequest, Message
+    from insight.llm.providers.openai_compat import OpenAICompatibleProvider
+
+    seen: dict = {}
+
+    def handler(request):
+        body = _json.loads(request.content)
+        for message in body["messages"]:
+            for call in message.get("tool_calls") or []:
+                assert call["type"] == "function"
+                assert isinstance(call["function"]["arguments"], str)
+        seen["body"] = body
+        return httpx.Response(200, json={
+            "model": "m",
+            "choices": [{"message": {"content": "West leads."}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+        })
+
+    class _Provider(OpenAICompatibleProvider):
+        name = "strict-gateway"
+        base_url = "https://strict.test/v1"
+
+    provider = _Provider(api_key="k", transport=httpx.MockTransport(handler))
+    response = asyncio.run(provider.generate(LLMRequest(
+        model="m",
+        messages=[
+            Message(role="user", content="q"),
+            Message(role="assistant", content="", tool_calls=[
+                {"id": "call_1", "name": "group_aggregate",
+                 "arguments": {"group_by": "region"}},
+            ]),
+            Message(role="tool", content="| region |",
+                    tool_call_id="call_1", name="group_aggregate"),
+        ],
+        tools=[{"type": "function", "function": {"name": "group_aggregate"}}],
+        tool_choice="auto",
+    )))
+    assert response.content == "West leads."
+    assert seen["body"]["messages"][1]["tool_calls"][0]["type"] == "function"
+
+
+def test_openai_inbound_tool_call_parsing_variants():
+    """The server->domain direction: wire tool_calls become internal
+    {id, name, arguments} objects, tolerating string/dict/blank arguments and
+    skipping nameless or unparseable entries."""
+    import json as _json
+
+    import httpx
+
+    from insight.llm.base import LLMRequest
+    from insight.llm.providers.openai_compat import OpenAICompatibleProvider
+
+    def handler(request):
+        return httpx.Response(200, json={
+            "model": "m",
+            "choices": [{"message": {
+                "content": "",
+                "tool_calls": [
+                    {"id": "1", "type": "function", "function": {
+                        "name": "group_aggregate",
+                        "arguments": _json.dumps({"group_by": "region"})}},
+                    {"id": "2", "type": "function", "function": {
+                        "name": "top_n", "arguments": {"n": 2}}},
+                    {"id": "3", "type": "function", "function": {
+                        "name": "value_counts", "arguments": "   "}},
+                    {"id": "4", "type": "function", "function": {
+                        "name": "broken_json", "arguments": "{oops"}},
+                    {"id": "5", "type": "function", "function": {}},
+                    {"id": "6", "type": "function", "function": {
+                        "name": "numeric_args", "arguments": 123}},
+                    {"id": "7", "type": "function", "function": {
+                        "name": "detect_outliers<|channel|>commentary",
+                        "arguments": {"column": "revenue"}}},
+                    {"id": "8", "type": "function", "function": {
+                        "name": "<|channel|>final", "arguments": {}}},
+                ],
+            }}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        })
+
+    class _Provider(OpenAICompatibleProvider):
+        name = "inbound-test"
+        base_url = "https://inbound.test/v1"
+
+    provider = _Provider(api_key="k", transport=httpx.MockTransport(handler))
+    response = asyncio.run(provider.generate(LLMRequest(model="m", messages=[])))
+    calls = response.tool_calls
+    assert [c.name for c in calls] == [
+        "group_aggregate", "top_n", "value_counts", "broken_json",
+        "numeric_args", "detect_outliers",
+    ]
+    assert calls[0].arguments == {"group_by": "region"}
+    assert calls[1].arguments == {"n": 2}
+    assert calls[2].arguments == {}
+    assert calls[3].arguments == {}
+    assert calls[4].arguments == {}
+    assert calls[5].arguments == {"column": "revenue"}
+
+
+def test_openai_malformed_response_raises_provider_error():
+    import httpx
+
+    from insight.domain.errors import ProviderError
+    from insight.llm.base import LLMRequest
+    from insight.llm.providers.openai_compat import OpenAICompatibleProvider
+
+    class _Provider(OpenAICompatibleProvider):
+        name = "malformed-test"
+        base_url = "https://malformed.test/v1"
+
+    provider = _Provider(
+        api_key="k",
+        max_retries=1,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"oops": 1})
+        ),
+    )
+    with pytest.raises(ProviderError, match="malformed response"):
+        asyncio.run(provider.generate(LLMRequest(model="m", messages=[])))

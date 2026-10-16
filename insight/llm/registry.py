@@ -10,8 +10,9 @@ from pydantic import BaseModel
 from insight.domain.errors import ConfigError
 from insight.llm.base import LLMProvider
 from insight.llm.providers.anthropic import AnthropicProvider
-from insight.llm.providers.groq import GroqProvider
+from insight.llm.providers.groq import Groq2Provider, GroqProvider
 from insight.llm.providers.mistral import MistralProvider
+from insight.llm.providers.nvidia import NvidiaProvider
 from insight.llm.providers.ollama import OllamaProvider
 from insight.llm.providers.openai import OpenAIProvider
 from insight.llm.providers.openai_compat import OpenAICompatibleProvider
@@ -57,6 +58,18 @@ PROVIDERS: dict[str, ProviderSpec] = {
             ("qwen/qwen3.8-27b", "balanced", {}),
         ),
     ),
+    "groq2": ProviderSpec(
+        name="groq2",
+        cls=Groq2Provider,
+        api_key_env="GROQ_API_KEY2",
+        curated_models=(
+            ("openai/gpt-oss-120b", "accurate",
+             {"supports_json_mode": True, "supports_reasoning_effort": True}),
+            ("openai/gpt-oss-20b", "fast",
+             {"supports_json_mode": True, "supports_reasoning_effort": True}),
+            ("qwen/qwen3.8-27b", "balanced", {}),
+        ),
+    ),
     "mistral": ProviderSpec(
         name="mistral",
         cls=MistralProvider,
@@ -92,6 +105,17 @@ PROVIDERS: dict[str, ProviderSpec] = {
         api_key_env="OPENROUTER_API_KEY",
         curated_models=(
             ("openai/gpt-4o-mini", "fast", {}),
+        ),
+        supports_discovery=True,
+        default_timeout_s=90.0,
+    ),
+    "nvidia": ProviderSpec(
+        name="nvidia",
+        cls=NvidiaProvider,
+        api_key_env="NVIDIA_API_KEY",
+        curated_models=(
+            ("openai/gpt-oss-20b", "fast",
+             {"supports_json_mode": True, "supports_reasoning_effort": True}),
         ),
         supports_discovery=True,
         default_timeout_s=90.0,
@@ -312,6 +336,7 @@ def build_llm_chain(
     preferred_model_id: str | None,
     settings: Settings | None = None,
     api_key: str | None = None,
+    no_fallback: bool = False,
 ) -> tuple[ModelInfo, list[tuple[LLMProvider, str, ModelInfo]]]:
     settings = settings or get_settings()
     _ensure_custom_registered(settings)
@@ -325,6 +350,11 @@ def build_llm_chain(
             return
         try:
             info = get_model_info(model_id)
+            spec = PROVIDERS.get(info.provider)
+            if spec is None:
+                return
+            if api_key is None and not provider_enabled(spec, settings):
+                return
             provider = create_provider(info.provider, settings, api_key=api_key)
         except ConfigError:
             return
@@ -346,6 +376,8 @@ def build_llm_chain(
     for info in sorted(other_providers, key=lambda m: m.tier != "accurate"):
         add(info.model_id)
 
+    if no_fallback:
+        chain = chain[:1]
     return primary_info, chain
 
 

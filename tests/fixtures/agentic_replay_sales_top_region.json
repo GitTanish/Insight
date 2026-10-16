@@ -1,0 +1,49 @@
+{
+  "case": "sales_top_region",
+  "question": "Question: Which region generates the highest total revenue?",
+  "responses": [
+    {
+      "content": "",
+      "provider": "nvidia",
+      "model": "openai/gpt-oss-20b",
+      "latency_ms": 2234,
+      "prompt_tokens": 5724,
+      "completion_tokens": 68,
+      "cached_prompt_tokens": null,
+      "tool_calls": [
+        {
+          "id": "chatcmpl-tool-83d55a467a2fe117",
+          "name": "group_aggregate",
+          "arguments": {
+            "group_by": "region",
+            "metrics": [
+              {
+                "column": "revenue",
+                "agg": "sum",
+                "alias": "total_revenue"
+              }
+            ],
+            "sort_by": "total_revenue",
+            "ascending": false
+          }
+        }
+      ]
+    },
+    {
+      "content": "The **West** region generates the highest total revenue, with a total of **$48,805.62**.",
+      "provider": "nvidia",
+      "model": "openai/gpt-oss-20b",
+      "latency_ms": 1781,
+      "prompt_tokens": 5870,
+      "completion_tokens": 74,
+      "cached_prompt_tokens": null,
+      "tool_calls": []
+    }
+  ],
+  "final_answer_excerpt": "West",
+  "expected_operations": [
+    "group_aggregate"
+  ],
+  "expected_llm_calls": 2,
+  "note": "Recorded live on 2026-10-16 from agentic_20261016_203241 (NVIDIA NIM openai/gpt-oss-20b, pinned). Request bodies trimmed; replay asserts the tool path, not byte-identical prompts."
+}

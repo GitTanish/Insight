@@ -43,10 +43,12 @@ Then edit `.env`:
 GROQ_API_KEY=gsk_your_key_here        # <- minimum needed, free at console.groq.com
 
 # optional extras (any subset works):
+GROQ_API_KEY2=           # optional second Groq account (separate quota pool)
 MISTRAL_API_KEY=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 OPENROUTER_API_KEY=
+NVIDIA_API_KEY=          # free NIM credits at build.nvidia.com
 ```
 
 > Keys already present in your existing `.env` count too — nothing else to do.
@@ -151,6 +153,22 @@ python evaluation/generate_datasets.py
 python evaluation/run_eval.py --model groq/openai/gpt-oss-120b
 python evaluation/run_eval_agentic.py --model groq/openai/gpt-oss-120b --limit 5
 ```
+
+Pinned, fallback-free A/B — the recipe behind the published numbers (needs
+`NVIDIA_API_KEY`; `--no-fallback` keeps the chain on one model so the run is
+provable):
+
+```bash
+python evaluation/run_eval_agentic.py --model nvidia/openai/gpt-oss-20b --no-fallback --delay 2
+python evaluation/run_eval.py        --model nvidia/openai/gpt-oss-20b --no-fallback
+python evaluation/ab_stats.py --agentic DIR1,DIR2,DIR3 --baseline DIR4,DIR5,DIR6
+```
+
+Offline verification tooling for the agentic layer: `python tools/mutate.py`
+(sampled mutation testing; mutmut is WSL-only) and a coverage run — both are
+spelled out in TEST.md § "Core Regression Commands". A clean clone reaches
+`pytest -q` exit 0 after `pip install -r requirements.txt -r requirements-dev.txt`
+(missing `evaluation/data/` skips tests, it never fails them).
 
 Assert that `pytest -q` exits 0 — not a test count (skips vary by platform and
 by which optional corpora are present).

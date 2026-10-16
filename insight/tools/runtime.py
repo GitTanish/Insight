@@ -9,7 +9,7 @@ the executor uses. The model can only pick a registered op and supply params;
 it cannot run arbitrary code.
 
 Results are serialised back into compact markdown so they can be appended as a
-``tool`` role message â€” mirroring what the explainer already receives (a small
+``tool`` role message — mirroring what the explainer already receives (a small
 preview of each table plus all calculations), never the raw dataframe.
 """
 
