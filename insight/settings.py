@@ -15,6 +15,9 @@ class Settings(BaseModel):
     groq_api_key: str | None = Field(
         default_factory=lambda: os.getenv("GROQ_API_KEY") or None
     )
+    groq2_api_key: str | None = Field(
+        default_factory=lambda: os.getenv("GROQ_API_KEY2") or None
+    )
     mistral_api_key: str | None = Field(
         default_factory=lambda: os.getenv("MISTRAL_API_KEY") or None
     )

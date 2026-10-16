@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from insight.domain.errors import ConfigError
 from insight.llm.base import LLMProvider
 from insight.llm.providers.anthropic import AnthropicProvider
-from insight.llm.providers.groq import GroqProvider
+from insight.llm.providers.groq import Groq2Provider, GroqProvider
 from insight.llm.providers.mistral import MistralProvider
 from insight.llm.providers.nvidia import NvidiaProvider
 from insight.llm.providers.ollama import OllamaProvider
@@ -50,6 +50,18 @@ PROVIDERS: dict[str, ProviderSpec] = {
         name="groq",
         cls=GroqProvider,
         api_key_env="GROQ_API_KEY",
+        curated_models=(
+            ("openai/gpt-oss-120b", "accurate",
+             {"supports_json_mode": True, "supports_reasoning_effort": True}),
+            ("openai/gpt-oss-20b", "fast",
+             {"supports_json_mode": True, "supports_reasoning_effort": True}),
+            ("qwen/qwen3.8-27b", "balanced", {}),
+        ),
+    ),
+    "groq2": ProviderSpec(
+        name="groq2",
+        cls=Groq2Provider,
+        api_key_env="GROQ_API_KEY2",
         curated_models=(
             ("openai/gpt-oss-120b", "accurate",
              {"supports_json_mode": True, "supports_reasoning_effort": True}),
@@ -337,6 +349,11 @@ def build_llm_chain(
             return
         try:
             info = get_model_info(model_id)
+            spec = PROVIDERS.get(info.provider)
+            if spec is None:
+                return
+            if api_key is None and not provider_enabled(spec, settings):
+                return
             provider = create_provider(info.provider, settings, api_key=api_key)
         except ConfigError:
             return

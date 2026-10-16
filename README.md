@@ -288,6 +288,7 @@ Insight is **model-agnostic**: every provider sits behind one `LLMProvider` inte
 | Provider | Key | Models |
 |---|---|---|
 | **Groq** *(default)* | `GROQ_API_KEY` | gpt-oss-120b / gpt-oss-20b, qwen3.8-27b |
+| **Groq (2nd account)** *(optional)* | `GROQ_API_KEY2` | same models via a separate quota pool (`groq2/...` ids) — doubles fallback + rate-limit headroom |
 | **Mistral** | `MISTRAL_API_KEY` | mistral-small / medium-latest |
 | **OpenAI** | `OPENAI_API_KEY` | gpt-4o family + live discovery |
 | **Anthropic** | `ANTHROPIC_API_KEY` | Claude models + live discovery |

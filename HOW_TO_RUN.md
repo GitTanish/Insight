@@ -43,6 +43,7 @@ Then edit `.env`:
 GROQ_API_KEY=gsk_your_key_here        # <- minimum needed, free at console.groq.com
 
 # optional extras (any subset works):
+GROQ_API_KEY2=           # optional second Groq account (separate quota pool)
 MISTRAL_API_KEY=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
