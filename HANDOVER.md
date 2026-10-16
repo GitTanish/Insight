@@ -1,7 +1,7 @@
 # INSIGHT — Session Handover
 
 > Last updated: 2026-10-13 · Engine v2.2.0-alpha · **offline suite green** · **20/20 live eval cases** · Python 3.11 venv at `.venv`
-> Branch note: agentic tool-use mode + alert runner landed on `feat/agentic-tool-use` (not merged to `main` at time of writing).
+> Branch note: agentic tool-use mode + alert runner are on `main` (merge `29dcc19`); `feat/agentic-tool-use` carries the subsequent live-verification/hardening pass (providers, eval infra, wire-level fixes, verification docs) as an open PR.
 
 ---
 
