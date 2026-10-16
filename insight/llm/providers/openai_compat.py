@@ -168,6 +168,11 @@ class OpenAICompatibleProvider(LLMProvider):
             name = fn.get("name")
             if not name:
                 continue
+            # gpt-oss models occasionally leak harmony control tokens into the
+            # wire name ("op<|channel|>commentary"); strip from the first "<|".
+            name = name.split("<|", 1)[0].strip()
+            if not name:
+                continue
             args_raw = fn.get("arguments")
             if isinstance(args_raw, str):
                 try:

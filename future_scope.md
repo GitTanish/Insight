@@ -58,12 +58,14 @@ budget 5/9): agentic **58/60 (96.7%, 95% CI 88.6–99.1)** vs single-shot
 **43/60 (71.7%, 59.2–81.5)** at mean 2.17 vs 2.36 `llm_calls`. The first live
 runs found and fixed an OpenAI wire-format bug that no offline fake could
 reach; env-var provider pinning proved unreliable on Windows, so a
-`--no-fallback` flag makes live runs provable. Offline assurance: 8/8 sampled
+`--no-fallback` flag makes live runs provable. Offline assurance: 9/9 sampled
 mutations killed, `loop.py` 96% branch coverage (see TEST.md "Verification
 evidence"). Next: repeat the pinned A/B on a second endpoint (Groq),
-investigate the `sup_chat_vs_email_resolution` failure, and test whether a
-System One op-classifier router can cut calls further (the `OperationRouter`
-seam is in place).
+and test whether a System One op-classifier router can cut calls further (the
+`OperationRouter` seam is in place). The `sup_chat_vs_email_resolution` failure
+was diagnosed: a gpt-oss harmony-token leak into tool names (fixed — inbound
+names are sanitized; post-fix pinned run 20/20); the residual pattern is the
+model short-circuiting past the required test op on that one case.
 
 ### Explicitly deferred (per owner decision)
 Python code-interpreter sandboxing (DuckDB chosen instead), auth/multi-user,

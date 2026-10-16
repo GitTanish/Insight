@@ -786,6 +786,11 @@ def test_openai_inbound_tool_call_parsing_variants():
                     {"id": "5", "type": "function", "function": {}},
                     {"id": "6", "type": "function", "function": {
                         "name": "numeric_args", "arguments": 123}},
+                    {"id": "7", "type": "function", "function": {
+                        "name": "detect_outliers<|channel|>commentary",
+                        "arguments": {"column": "revenue"}}},
+                    {"id": "8", "type": "function", "function": {
+                        "name": "<|channel|>final", "arguments": {}}},
                 ],
             }}],
             "usage": {"prompt_tokens": 1, "completion_tokens": 1},
@@ -800,13 +805,14 @@ def test_openai_inbound_tool_call_parsing_variants():
     calls = response.tool_calls
     assert [c.name for c in calls] == [
         "group_aggregate", "top_n", "value_counts", "broken_json",
-        "numeric_args",
+        "numeric_args", "detect_outliers",
     ]
     assert calls[0].arguments == {"group_by": "region"}
     assert calls[1].arguments == {"n": 2}
     assert calls[2].arguments == {}
     assert calls[3].arguments == {}
     assert calls[4].arguments == {}
+    assert calls[5].arguments == {"column": "revenue"}
 
 
 def test_openai_malformed_response_raises_provider_error():

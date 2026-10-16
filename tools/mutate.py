@@ -93,6 +93,15 @@ MUTATIONS: list[dict] = [
         ],
     },
     {
+        "label": "harmony-token sanitization of inbound tool names disabled",
+        "file": "insight/llm/providers/openai_compat.py",
+        "old": "name = name.split(\"<|\", 1)[0].strip()",
+        "new": "name = name",
+        "tests": [
+            "tests/test_agentic_pipeline.py",
+        ],
+    },
+    {
         "label": "HITL precedence dropped (settings.plan_approval ignored)",
         "file": "insight/orchestrator.py",
         "old": "if request.plan_only or settings.plan_approval:",

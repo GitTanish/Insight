@@ -275,6 +275,7 @@ The repository contains **37 tracked test files** (`git ls-files tests/`) that e
   * Δ **+25.0 pp** in favour of agentic, same cases and grader. Raw evidence: `.artifacts/eval/ab_no_fallback_stats.json`; agentic dirs `agentic_20261016_203241/203630/204032`, baseline dirs `run_20261016_204504/205940/211455`. `agentic_20261016_203241` carries the `transcript.jsonl` that `test_agentic_replay.py` replays offline.
   * **Token totals are not comparable across arms** (agentic sums every provider call; single-shot records the meta usage block) — compare `llm_calls` and wall time, not token counts.
   * Historical context: the first live runs (Groq `openai/gpt-oss-120b`, unpinned) exposed the wire-format bug (every 2nd turn 400'd); after the fix they scored 17/20 at the 3/6 smoke budget (all failures iteration caps) with ~178 s/case free-tier TPM backoff. Superseded by the pinned numbers above.
+  * Post-fix confirmation (2026-10-17, after the harmony-token sanitizer): one more pinned k=1 run on the same endpoint passed **20/20** (42 calls, 0 throttled). A separate data point, not folded into the k=3 aggregate (different code revision).
 
 ### Verification evidence (2026-10-16 deep pass)
 
@@ -292,9 +293,9 @@ Claim → check matrix for the agentic layer. **A claim without a check below is
 | Pinned single-model live runs (no silent fallback) | registry test pins `no_fallback` chain to primary | `models_used` is single-model in all 6 pinned dirs | **PROVEN** |
 | Agentic beats single-shot on the same cases | shared `score_case` unit-tested offline | 96.7% vs 71.7% (k=3; CIs exclude equality) | **PROVEN for NIM `gpt-oss-20b` only** |
 | Works across other providers | Anthropic/OpenAI payload-shape tests | Groq smokes + historical 17/20 only | **PARTIAL / UNVERIFIED broadly** |
-| Live SSE tool trail in a browser | `test_webapp_agentic.py` (SSE frames asserted) | not re-verified in this pass | **UNVERIFIED live** |
+| Live SSE tool trail | `test_webapp_agentic.py` (SSE frames asserted) | 2026-10-17 live smoke (`tools/sse_smoke.py`): tool_call → tool_result in order, 32 streamed delta chunks, result cites "West", no error frame | **PROVEN live** |
 
-**Mutation sampling** (`tools/mutate.py`; mutmut is WSL-only, this is the curated substitute): 8 single-site mutations targeting `loop.py` invariants, the wire parser and the HITL guard — **8/8 killed** by the offline suite. The first sampling round survived 1/7: nothing tested that `filter_rows` narrows the implicit working frame; the gap was closed with `test_filter_rows_narrows_working_frame_for_later_calls`. Sampled, not exhaustive — do not present this as a mutation score.
+**Mutation sampling** (`tools/mutate.py`; mutmut is WSL-only, this is the curated substitute): 9 single-site mutations targeting `loop.py` invariants, the wire parser (incl. the harmony-token sanitizer) and the HITL guard — **9/9 killed** by the offline suite. The first sampling round survived 1/7: nothing tested that `filter_rows` narrows the implicit working frame; the gap was closed with `test_filter_rows_narrows_working_frame_for_later_calls`. Sampled, not exhaustive — do not present this as a mutation score.
 
 **Branch coverage** (`coverage run --branch` over the agentic + provider test selection): `insight/tools/loop.py` **96%** branch; `insight/tools/` between 75% and 100% (scoped total 81%). Remaining `openai_compat.py` misses are the SSE stream parser, `list_models` discovery and retry-sleep branches — pre-existing non-agentic paths; the wire-format functions are fully covered.
 
@@ -304,7 +305,7 @@ Claim → check matrix for the agentic layer. **A claim without a check below is
 1. The wire-format bug was real and live-only — found, fixed, now pinned by tests in both directions.
 2. Environment-variable provider pinning **does not work on Windows/PowerShell**: `$env:FOO=''` *removes* the variable and dotenv refills it from `.env`. Fallback contamination was also invisible in `models_used` because Groq and NIM both serve a model named `openai/gpt-oss-20b`. Use `--no-fallback`; never trust env pinning for provable runs.
 3. The baseline's most common failure (`returned empty content`) is undiagnosed NIM flakiness — it weakens the baseline somewhat but does not explain away a 25-point gap.
-4. `sup_chat_vs_email_resolution` fails in both arms (1/3 each, different reasons) — a genuinely hard multi-hop case; investigate before claiming robustness there.
+4. `sup_chat_vs_email_resolution` (1/3 in both arms) was investigated on 2026-10-17: one agentic failure came from **gpt-oss harmony control tokens leaking into the wire tool name** (`group_aggregate<|channel|>commentary` → unknown op → retry loop → `iteration_cap_reached`). Fixed by sanitizing inbound tool names (regression test + killed mutation); the post-fix pinned run passed 20/20. The other failure is the model short-circuiting to `group_aggregate` when the grader requires a test op — model behavior; the grader stays strict.
 5. Cross-arm token totals are not comparable (see above).
 6. Only one endpoint/model carries the full k≥3 A/B; k=3 gives ±~6-10 pp CIs — the direction is solid, the exact rate is not final. Do not quote 96.7% as a permanent property of the feature.
 
@@ -462,6 +463,9 @@ python evaluation/ab_stats.py --agentic DIR1,DIR2 --baseline DIR3,DIR4
 python tools/mutate.py
 python -m coverage run --branch --source=insight.tools,insight.llm.providers.openai_compat -m pytest tests/test_agentic_tools.py tests/test_agentic_pipeline.py tests/test_agentic_adversarial.py tests/test_agentic_replay.py tests/test_webapp_agentic.py tests/test_chain_fallback.py tests/test_providers.py -q
 python -m coverage report -m
+
+# Live SSE smoke (start the app first: uvicorn webapp.app:app --port 8899)
+python tools/sse_smoke.py
 ```
 
 ### Manual Agentic Smoke Test
@@ -490,3 +494,4 @@ python -m coverage report -m
 * **An SSE drain bug that only a real hang reveals (2026-10-13)**: the agentic branch streamed loop events with `yield queue.get()` — yielding an **un-awaited coroutine**. The queue therefore never drained and the generator yielded fresh coroutines forever: the request hung until timeout, and the offline suite had no test that exercised a successful agentic SSE run to completion. Fixed to `yield await queue.get()`. Lesson: generator pipelines that *forward* another queue/task need an end-to-end drain test, not just per-event assertions.
 * **`_Chain.generate` rejected tool-calling responses**: the empty-content guard (`raise InsightError("returned empty content")`) fired on legitimate tool-call turns, where content is `""` and the call lives in `tool_calls`. Any provider abstraction with tool support must exempt tool-only responses from text-emptiness checks.
 * **A wire-format bug no offline fake could see (2026-10-16)**: assistant `tool_calls` were serialised in the internal shape `{id, name, arguments: dict}` instead of OpenAI's `{id, type: "function", function: {name, arguments: <json string>}}`. Every *second* turn of an agentic run was a hard HTTP 400 on every OpenAI-compatible provider (first live smoke, Groq: `'messages.1.tool_calls.0.type' : property 'type' is missing`). The scripted-LLM suite could not catch it because tool turns never crossed the provider HTTP layer. Lesson: fakes that bypass a serialization boundary do not test that boundary — keep one test per provider that goes through `httpx.MockTransport` and asserts the exact wire shape, plus at least one live multi-turn smoke before trusting a tool-calling path.
+* **Model control tokens can arrive inside structured fields (2026-10-17)**: in a pinned live run, NIM's gpt-oss-20b returned tool calls whose `function.name` carried the harmony channel suffix (`group_aggregate<|channel|>commentary`). Dispatch treated each as an unknown op, the loop burned its budget retrying, and the case died as `iteration_cap_reached` — a trained-model quirk no hand-written fake would ever emit. Fixed by stripping from the first `<|` in inbound names (a name that is *nothing but* tokens is dropped). Lesson: wire-format tests must include malformed-but-realistic model emissions, and a retry loop cannot recover from a corruption it re-feeds to itself verbatim.

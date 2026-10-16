@@ -215,11 +215,14 @@ Cache key includes the mode. Tests: `test_agentic_pipeline.py` (20),
 (no fallback) → 58/60 (96.7%) agentic vs 43/60 (71.7%) single-shot; wire-format
 fix + inbound-parser tests in `test_agentic_pipeline.py`; recorded replay
 fixture (`tests/fixtures/agentic_replay_sales_top_region.json` →
-`test_agentic_replay.py`); `tools/mutate.py` sampled mutations 8/8 killed (the
-first round survived one: implicit `filter_rows` narrowing — test added);
-`loop.py` 96% branch coverage; clean-clone bootstrap green (283 passed /
-6 skipped before datasets, 286/3 after `generate_datasets.py`). Details:
-TEST.md "Verification evidence".
+`test_agentic_replay.py`); `tools/mutate.py` sampled mutations 9/9 killed (the
+first round survived one: implicit `filter_rows` narrowing — test added; the
+ninth covers the harmony-token sanitizer); `loop.py` 96% branch coverage;
+clean-clone bootstrap green (283 passed / 6 skipped before datasets, 286/3
+after `generate_datasets.py`). Live SSE trail smoke
+(`tools/sse_smoke.py`, 2026-10-17): tool_call → tool_result ordering and
+streamed deltas confirmed against a running uvicorn; post-fix pinned run
+20/20. Details: TEST.md "Verification evidence".
 
 **Gotchas**: (1) the SSE drain must `yield await queue.get()` — yielding the
 bare coroutine never drains the queue and spins the generator forever.
