@@ -90,7 +90,7 @@ question → [call op → read real computed result] ×n → final answer
 - **Chart planning is deterministic in this mode:** the two most recent table-producing steps are rendered with the same editorial rules, and any bad chart spec is rejected by the ordinary validator rather than trusted.
 - Provider-agnostic: OpenAI-shaped tools on every OpenAI-compatible endpoint, Anthropic-shaped tools when the chain's primary provider is Anthropic.
 - `INSIGHT_PLAN_APPROVAL=on` (or `plan_only`) takes precedence: that gate needs a reviewable plan before anything executes, so those requests use the single-shot planner.
-- Benchmark it against the single-shot planner with the same golden cases and grader — `python evaluation/run_eval_agentic.py --model <id> --record` — then aggregate k repetitions per arm with `evaluation/ab_stats.py`. The first live runs of this harness immediately paid for themselves: they exposed an OpenAI wire-format bug in the assistant tool-call history that no scripted fake could see (every second turn of an agentic run was a hard HTTP 400; fixed and pinned by tests).
+- Benchmark it against the single-shot planner with the same golden cases and grader: `python evaluation/run_eval_agentic.py --model <id> --no-fallback --record`, then aggregate k repetitions per arm with `evaluation/ab_stats.py`. **Measured so far** (k=3, NVIDIA NIM `gpt-oss-20b`, production budget, no fallback): **58/60 (96.7%, 95% CI 88.6–99.1) vs 43/60 (71.7%, 59.2–81.5)** for single-shot, at 2.17 vs 2.36 mean LLM calls — one endpoint, so treat the exact rate as provisional. The harness paid for itself on its first live runs: it exposed an OpenAI wire-format bug in the assistant tool-call history that no scripted fake could see (every second turn was a hard HTTP 400; fixed and pinned by tests), and later proved that env-var provider pinning is unreliable on Windows — hence `--no-fallback`.
 
 ---
 
@@ -127,7 +127,7 @@ It registers the CSVs as DuckDB tables, runs each monitor's query through the *s
 - **Headless JSON API** — `POST /api/query` exposes the same verified pipeline for scripts and integrations. Send `plan_only: true` to get a reviewable plan back instead of an answer, or `agentic: true` for one tool-calling run.
 - **Query-result cache** — identical (dataset hash, question, model, temperature, session state) hits are served from `.artifacts/cache/` with TTL + size-budget eviction (`INSIGHT_QUERY_CACHE=off` to disable). Serves the streaming UI path too: ~20× faster on repeats.
 - **Prefix-cached prompts** — the planner's system prompt stays byte-stable per dataset (per-turn state lives in later messages, not the prefix), so providers serve it from their prompt cache. Reported as `cached_prompt_tokens`.
-- **Golden-question eval harness** — 20 seeded/real benchmark cases (incl. the 54K-row diamonds dataset and a 250K-row synthetic retail set) with exact ground truth; `evaluation/run_eval.py` scores the single-shot path, `run_eval_agentic.py` runs the same cases and grader through the agentic loop (token/wall/model telemetry, optional raw transcripts via `--record`), and `ab_stats.py` aggregates k repetitions into per-case pass counts and Wilson CIs.
+- **Golden-question eval harness** — 20 seeded/real benchmark cases (incl. the 54K-row diamonds dataset and a 250K-row synthetic retail set) with exact ground truth; `evaluation/run_eval.py` scores the single-shot path, `run_eval_agentic.py` runs the same cases and grader through the agentic loop (token/wall/model telemetry, optional raw transcripts via `--record`, `--no-fallback` for provable single-model runs), and `ab_stats.py` aggregates k repetitions into per-case pass counts and Wilson CIs. Pinned k=3 result: agentic 96.7% vs 71.7% single-shot on the same cases; the agentic loop itself additionally carries sampled mutation tests (8/8 killed) and 96% branch coverage.
 - **Observability** — optional LangSmith tracing of every plan, step, and LLM call.
 
 ---
@@ -186,6 +186,7 @@ MISTRAL_API_KEY=your_key_here
 OPENAI_API_KEY=your_key_here
 ANTHROPIC_API_KEY=your_key_here
 OPENROUTER_API_KEY=your_key_here
+NVIDIA_API_KEY=your_key_here        # free NIM credits at build.nvidia.com
 ```
 
 Or export directly:
