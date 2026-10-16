@@ -20,6 +20,7 @@ Measured on this repo during development — not aspirational numbers:
 | Anchor metric | What it proves |
 |---|---|
 | **20/20** golden-question eval cases passed live (Groq · Mistral · opencode) | the no-invented-numbers policy holds end-to-end |
+| **Agentic vs single-shot, pinned live A/B** (k=3, production budget, one model, no fallback): **58/60 (96.7%)** vs **43/60 (71.7%)** on the same 20 golden cases | the tool loop measurably beats the single-shot planner at comparable call counts (2.17 vs 2.36), backed by mutation-sampled tests (`loop.py` at 96% branch coverage) |
 | **250K rows**: profiled in **2.0s**, heaviest op **<2s**, bivariate OLS in **125ms** | deterministic engine at real scale, not toy data |
 | **−31.7% Brier score** after isotonic recalibration; over-confidence flagged at **ECE = 0.245** | calibration audits quantify, not guess |
 | **≤0.13% aggregate drift** under 5% MCAR missingness → graceful **0.60% @ 35%**, with explicit MCAR caveats | honest missing-data behavior, surfaced not hidden |
@@ -259,7 +260,18 @@ python evaluation/ab_stats.py --agentic DIR1,DIR2,DIR3 --baseline DIR4,DIR5,DIR6
 #   and wall time, token totals, throttled counts, failure-reason rollup
 ```
 
-Handy flags: `--limit N`, `--dataset sales.csv`, `--delay S` (spacing between provider calls to stay under free-tier TPM), `--max-iterations`/`--max-llm-calls` (eval default 3/6 for cheap smokes; the app ships 5/9). Results are written incrementally, so an interrupted or throttled run still yields analysable data.
+Handy flags: `--limit N`, `--dataset sales.csv`, `--delay S` (spacing between provider calls to stay under free-tier TPM), `--max-iterations`/`--max-llm-calls` (eval default 3/6 for cheap smokes; the app ships 5/9), `--no-fallback` (pin the chain to the primary model — required for a provable single-model A/B; env-var pinning is unreliable on Windows). Results are written incrementally, so an interrupted or throttled run still yields analysable data.
+
+Pinned, fallback-free A/B — the exact recipe behind the numbers above (needs `NVIDIA_API_KEY`):
+
+```bash
+python evaluation/run_eval_agentic.py --model nvidia/openai/gpt-oss-20b --no-fallback --delay 2 --record
+python evaluation/run_eval.py        --model nvidia/openai/gpt-oss-20b --no-fallback
+# → k=3 on 20 cases: agentic 58/60 (96.7%, 95% CI 88.6–99.1)
+#                      single-shot 43/60 (71.7%, 95% CI 59.2–81.5)
+```
+
+Cross-arm caveat: token totals are not comparable (the agentic runner sums every provider call; the single-shot runner records the meta usage block) — compare `llm_calls` and wall time instead.
 
 Real-world runs are recorded in [evaluation/REAL_WORLD_LOG.md](evaluation/REAL_WORLD_LOG.md):
 the question battery, ops executed per answer, timings, grounding flags, plus an
@@ -423,7 +435,7 @@ Still, aggregates and schemas leave your machine: whatever you ask, the numbers 
 
 **Rate limit errors** — Groq free tier allows 30 requests/min on gpt-oss models. Wait a moment, switch to `gpt-oss-20b`, or add a Mistral key for fallback.
 
-**Agentic runs feel slow on free tiers** — each turn re-sends the tool history, and Groq's free TPM can spend minutes in silent retry backoff before a call succeeds (the outcome reports `throttled=0`; the wall clock tells the truth). Space calls (`--delay` in the eval runners, `INSIGHT_AGENTIC_DELAY_S` in the app), keep budgets sane, or point a higher-limit endpoint at `INSIGHT_CUSTOM_*` (e.g. NVIDIA NIM).
+**Agentic runs feel slow on free tiers** — each turn re-sends the tool history, and Groq's free TPM can spend minutes in silent retry backoff before a call succeeds (the outcome reports `throttled=0`; the wall clock tells the truth). Space calls (`--delay` in the eval runners, `INSIGHT_AGENTIC_DELAY_S` in the app), keep budgets sane, or switch to the built-in NVIDIA NIM endpoint (`NVIDIA_API_KEY`, model `nvidia/openai/gpt-oss-20b`) — it throttles in bursts rather than stretching every call.
 
 **Charts not appearing** — check the `.artifacts/web/<session>/` folder is writable; render warnings appear under answers.
 

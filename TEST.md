@@ -209,7 +209,7 @@ To verify whether Insight is *actually correct* rather than merely returning pla
 
 ### Offline Unit & Integration Test Suite (`tests/`)
 
-The repository contains **33 tracked test files** (`git ls-files tests/`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 — **never** an absolute test count (see Documentation Discrepancies).
+The repository contains **37 tracked test files** (`git ls-files tests/`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 — **never** an absolute test count (see Documentation Discrepancies).
 
 | Test File | What It Actually Exercises | Weaknesses / False-Confidence Risks |
 |---|---|---|
@@ -233,6 +233,7 @@ The repository contains **33 tracked test files** (`git ls-files tests/`) that e
 | `test_agentic.py` | Deterministic follow-up suggestion ranking | Heuristic scoring only. |
 | `test_agentic_tools.py` | Tool-schema generation (every op → a tool, self-contained JSON, Anthropic shape), dispatch rejection paths, loop budgets/throttle | Loop-only; no orchestrator integration. |
 | `test_agentic_pipeline.py` | Loop→rebuild→shared-tail integration: multi-call turns, `input_step` chaining, repeated-failure abort, SSE event sink, plan/execution rebuild, chart synthesis, meta telemetry, orchestrator E2E, grounding flags invented numbers, throttle/provider-failure error paths, cache separation, `plan_only` precedence, `artifacts_dir=None` | Entirely scripted responses — offline by construction; live behavior is exercised separately by `evaluation/run_eval_agentic.py` (see the Golden-Question Evaluation Harness section for what has actually been measured). |
+| `test_agentic_replay.py` | Record/replay: a trimmed transcript of the first pinned live NIM run (`tests/fixtures/agentic_replay_sales_top_region.json`) is replayed through the real loop — dispatch and op execution are live code, only the LLM is recorded; skips when `evaluation/data/` is absent | One recorded happy path; replay proves determinism, not live variance. |
 | `test_text_streaming.py` | Token-by-token SSE deltas, `first_token_ms`, live typing-bubble rendering, reduced-motion caret | Chunking and browser rendering are stubbed/asserted on markup, not observed live. |
 | `test_prompt_cache.py` | Planner system-prompt byte stability (the prefix-cache prefix), `cache_prompt` flag set, `cached_prompt_tokens` accounting | Uses a stubbed usage block; real provider cache hits not asserted. |
 | `test_hitl_plan_approval.py` | `plan_review` stop (never executes), editable plan payload, approved plan executes without re-planning, approved plan re-validated against the schema, user edits honored, `INSIGHT_PLAN_APPROVAL` forces the gate, plan review never cached, `analyze()` rejects `plan_only`, client controls exist | `analyze()` raising for `plan_only` is by design (it cannot express a plan-only outcome). |
@@ -268,7 +269,44 @@ The repository contains **33 tracked test files** (`git ls-files tests/`) that e
 * **Historical Benchmark Results**:
   * **Groq (`openai/gpt-oss-120b`)**: 20/20 cases passed (Live run: 2026-08-22).
   * **OpenCode (`x-preview-f-free`)**: 8/8 real-world diamonds battery passed with 0 unverified figures (`evaluation/REAL_WORLD_LOG.md`).
-  * **Agentic mode (live, in progress)**: first live runs on Groq `openai/gpt-oss-120b` exposed — and the fix landed for — an OpenAI wire-format bug in the assistant tool-call history (every 2nd turn 400'd; offline fakes never crossed the provider wire layer). After the fix: **17/20 at the eval smoke budget (3 iterations/6 calls)** — all 3 failures are `iteration_cap_reached` (the model was still mid-analysis when the cheap budget ran out; the app ships 5/9) — and **10/10 so far at the production budget (5/9)** before free-tier TPM backoff stopped the run (~178 s/case wall; `throttled=0` because internal retries eventually succeed). A full k≥3 A/B aggregated with `evaluation/ab_stats.py` is pending a higher-quota endpoint (NVIDIA NIM is wired via `INSIGHT_CUSTOM_*`). Do not quote a final agentic pass rate until that lands.
+* **Pinned A/B (2026-10-16; k=3, 20 cases, NVIDIA NIM `openai/gpt-oss-20b`, both arms `--no-fallback --delay 2`; agentic at the production budget 5/9)**:
+  * **Agentic: 58/60 = 96.7%** (95% Wilson CI 88.6–99.1); mean 2.17 `llm_calls`, mean wall 11.3 s; 0 throttled. Only weak case: `sup_chat_vs_email_resolution` (1/3; the two failures are `iteration_cap_reached` and an ops mismatch).
+  * **Single-shot baseline: 43/60 = 71.7%** (95% Wilson CI 59.2–81.5); mean 2.36 `llm_calls`, mean wall 51.3 s; 0 throttled. Failures: `AllProvidersFailedError … returned empty content` (NIM flaking; most common), `plan_validation_failed`, one numeric tolerance miss.
+  * Δ **+25.0 pp** in favour of agentic, same cases and grader. Raw evidence: `.artifacts/eval/ab_no_fallback_stats.json`; agentic dirs `agentic_20261016_203241/203630/204032`, baseline dirs `run_20261016_204504/205940/211455`. `agentic_20261016_203241` carries the `transcript.jsonl` that `test_agentic_replay.py` replays offline.
+  * **Token totals are not comparable across arms** (agentic sums every provider call; single-shot records the meta usage block) — compare `llm_calls` and wall time, not token counts.
+  * Historical context: the first live runs (Groq `openai/gpt-oss-120b`, unpinned) exposed the wire-format bug (every 2nd turn 400'd); after the fix they scored 17/20 at the 3/6 smoke budget (all failures iteration caps) with ~178 s/case free-tier TPM backoff. Superseded by the pinned numbers above.
+
+### Verification evidence (2026-10-16 deep pass)
+
+Claim → check matrix for the agentic layer. **A claim without a check below is UNVERIFIED — treat it as unproven.**
+
+| Claim | Offline check | Live check | Status |
+|---|---|---|---|
+| Loop budgets are hard (INV-11) | AGENT-01/02; mutation "budget off-by-one" killed | 0 overruns across the pinned runs | **PROVEN** |
+| Repeated identical failure aborts (INV-11) | AGENT-03; 2 mutations killed (early-fire + never-fire) | — (no live failure loops) | **PROVEN** |
+| Tool calls never execute code; unknown op/column rejected (INV-12) | AGENT-04 + adversarial suite | — | **PROVEN** |
+| Agentic answers pass the same validator + grounding gates (INV-13) | AGENT-06; grader rule 4 requires `validation_valid` | all 58 passing trials had `validation_valid` | **PROVEN** |
+| HITL precedence over agentic (INV-14) | AGENT-08 + orchestrator guard tests; mutation killed at **both** guard sites | — | **PROVEN** |
+| Chaining via `input_step` and implicit `filter_rows` narrowing | AGENT-05 + narrowing regression (added after mutation sampling found it untested) | replay fixture executes the real chain | **PROVEN** |
+| OpenAI wire format, both directions | `MockTransport` strict-validator test; inbound parsing-variants test | first live multi-turn runs | **PROVEN** |
+| Pinned single-model live runs (no silent fallback) | registry test pins `no_fallback` chain to primary | `models_used` is single-model in all 6 pinned dirs | **PROVEN** |
+| Agentic beats single-shot on the same cases | shared `score_case` unit-tested offline | 96.7% vs 71.7% (k=3; CIs exclude equality) | **PROVEN for NIM `gpt-oss-20b` only** |
+| Works across other providers | Anthropic/OpenAI payload-shape tests | Groq smokes + historical 17/20 only | **PARTIAL / UNVERIFIED broadly** |
+| Live SSE tool trail in a browser | `test_webapp_agentic.py` (SSE frames asserted) | not re-verified in this pass | **UNVERIFIED live** |
+
+**Mutation sampling** (`tools/mutate.py`; mutmut is WSL-only, this is the curated substitute): 8 single-site mutations targeting `loop.py` invariants, the wire parser and the HITL guard — **8/8 killed** by the offline suite. The first sampling round survived 1/7: nothing tested that `filter_rows` narrows the implicit working frame; the gap was closed with `test_filter_rows_narrows_working_frame_for_later_calls`. Sampled, not exhaustive — do not present this as a mutation score.
+
+**Branch coverage** (`coverage run --branch` over the agentic + provider test selection): `insight/tools/loop.py` **96%** branch; `insight/tools/` between 75% and 100% (scoped total 81%). Remaining `openai_compat.py` misses are the SSE stream parser, `list_models` discovery and retry-sleep branches — pre-existing non-agentic paths; the wire-format functions are fully covered.
+
+**Clean-clone bootstrap** (2026-10-16): `git clone` → fresh venv → `pip install -r requirements.txt -r requirements-dev.txt` → `pytest -q` = **283 passed, 6 skipped, exit 0** — missing datasets cause skips, never failures. After `python evaluation/generate_datasets.py`: **286 passed, 3 skipped**; the residual skips need `.env` provider keys, a manual `diamonds.csv`, or `INSIGHT_RUN_EVAL=1`.
+
+**What failed / still unproven (read before quoting anything)**:
+1. The wire-format bug was real and live-only — found, fixed, now pinned by tests in both directions.
+2. Environment-variable provider pinning **does not work on Windows/PowerShell**: `$env:FOO=''` *removes* the variable and dotenv refills it from `.env`. Fallback contamination was also invisible in `models_used` because Groq and NIM both serve a model named `openai/gpt-oss-20b`. Use `--no-fallback`; never trust env pinning for provable runs.
+3. The baseline's most common failure (`returned empty content`) is undiagnosed NIM flakiness — it weakens the baseline somewhat but does not explain away a 25-point gap.
+4. `sup_chat_vs_email_resolution` fails in both arms (1/3 each, different reasons) — a genuinely hard multi-hop case; investigate before claiming robustness there.
+5. Cross-arm token totals are not comparable (see above).
+6. Only one endpoint/model carries the full k≥3 A/B; k=3 gives ±~6-10 pp CIs — the direction is solid, the exact rate is not final. Do not quote 96.7% as a permanent property of the feature.
 
 ---
 
@@ -413,8 +451,17 @@ python evaluation/run_eval.py --model groq/openai/gpt-oss-120b --limit 5
 # Agentic A/B against the SAME golden cases and grader (live, needs quota)
 python evaluation/run_eval_agentic.py --model groq/openai/gpt-oss-120b --limit 5 --delay 2
 
+# Pinned, fallback-free A/B (requires NVIDIA_API_KEY; the exact recipe for the published numbers)
+python evaluation/run_eval_agentic.py --model nvidia/openai/gpt-oss-20b --no-fallback --delay 2 --record
+python evaluation/run_eval.py --model nvidia/openai/gpt-oss-20b --no-fallback
+
 # Aggregate repeated runs into stats (per-case passes/k, 95% Wilson CI, cost)
 python evaluation/ab_stats.py --agentic DIR1,DIR2 --baseline DIR3,DIR4
+
+# Mutation sampling + branch coverage of the agentic tool layer (offline, no keys)
+python tools/mutate.py
+python -m coverage run --branch --source=insight.tools,insight.llm.providers.openai_compat -m pytest tests/test_agentic_tools.py tests/test_agentic_pipeline.py tests/test_agentic_adversarial.py tests/test_agentic_replay.py tests/test_webapp_agentic.py tests/test_chain_fallback.py tests/test_providers.py -q
+python -m coverage report -m
 ```
 
 ### Manual Agentic Smoke Test
@@ -429,8 +476,8 @@ python evaluation/ab_stats.py --agentic DIR1,DIR2 --baseline DIR3,DIR4
 1. **Single-Worker Container Constraint**: In-memory `WebSession` state (uploaded CSV bytes, profile, conversation history) lives in Python process memory. The Docker container must run exactly **one** Uvicorn worker. Horizontal multi-worker scaling requires externalizing session state (e.g. to Redis).
 2. **Windows cp1252 Unicode**: Windows terminal printing Unicode characters (e.g. `…`, `\u202f`) can crash scripts unless `sys.stdout.reconfigure(encoding="utf-8")` is invoked.
 3. **PowerShell UTF-8 BOM**: PowerShell 5.1 `Set-Content` can inject a Byte Order Mark (BOM). All parsers must handle UTF-8-SIG or strip BOMs.
-4. **Agentic mode's live coverage is partial**: the tool loop, plan rebuild, shared tail, SSE trail, budgets and failure paths are covered offline by `test_agentic_pipeline.py` / `test_webapp_agentic.py`; live golden-case runs exist (17/20 @ 3/6; 10/10 @ 5/9, partial — see the harness section) but the full k≥3 A/B has not completed. Do not quote a final agentic pass rate as if it were measured.
-5. **Agentic cost/latency is only partially measured**: first live runs averaged ~2.0–2.2 `llm_calls` per case, with wall time dominated by free-tier TPM backoff (minutes per case on the Groq free tier, invisible to `throttled`). `INSIGHT_AGENTIC_MAX_LLM_CALLS` (default 9) is still a safety bound, not a tuned budget — tune it against the k≥3 run before recommending a default.
+4. **Agentic mode's live coverage has one measured endpoint**: the full k≥3 pinned A/B completed on NVIDIA NIM `gpt-oss-20b` (58/60 vs 43/60 single-shot — see Verification evidence), and the tool loop, plan rebuild, shared tail, SSE trail, budgets and failure paths are covered offline; but no other endpoint has a full A/B (Groq is smokes plus a historical 17/20 at the 3/6 budget). Re-run the pinned harness before claiming a rate on another model.
+5. **Agentic cost is measured; quota behavior is not**: pinned runs averaged 2.17 `llm_calls` (2.36 single-shot) and 11.3 s wall vs 51.3 s. On the Groq free tier, wall time was dominated by TPM backoff (~178 s/case, invisible to `throttled` because internal retries eventually succeed); NIM throttles in bursts instead. `INSIGHT_AGENTIC_MAX_LLM_CALLS` (default 9) remains a safety bound, not a tuned budget.
 6. **Alert-runner state is per-process**: fired-monitor state lives in memory, so a restart re-posts an already-triggering monitor, and multi-instance deployments have no shared state. It is a reference worker, not a durable scheduler; cron/interval supervision is the caller's job.
 7. **Deferred Features (Do Not Implement Unprompted)**: Python code-interpreter sandboxes (omitted by design; DuckDB covers analytics safely), multi-user authentication, and native PDF exports.
 

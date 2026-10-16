@@ -50,19 +50,20 @@ The query-result cache now serves the SSE path too (~0.23-0.39s repeats vs
 same sandboxed DuckSession and posts Slack-compatible payloads on threshold
 state-change (see README "Alert runner").
 
-### 6. Agentic mode — shipped; live A/B in progress
+### 6. Agentic mode — shipped; A/B measured on one endpoint
 `INSIGHT_AGENTIC` routes questions through the tool-calling loop
-(`insight/tools/`) with the same verification tail. The loop is offline-tested;
-the live A/B harness (`evaluation/run_eval_agentic.py`) has now run against real
-quota — its first runs found and fixed an OpenAI wire-format bug in the
-tool-call history that no offline fake could reach. First results: 17/20 at the
-smoke budget (3/6, failures are iteration caps), 10/10 at the production budget
-(5/9) before free-tier TPM backoff stopped the run; full k≥3 aggregation
-(`evaluation/ab_stats.py`) awaits a higher-quota endpoint (NVIDIA NIM is wired
-via `INSIGHT_CUSTOM_*`). Sweet spots worth measuring next: whether agentic
-recovers more first-pass plans (fewer repairs) vs single-shot at similar LLM
-call counts, and whether a System One op-classifier router can cut calls
-further (the `OperationRouter` seam is in place).
+(`insight/tools/`) with the same verification tail. Pinned k=3 A/B on NVIDIA
+NIM `gpt-oss-20b` (2026-10-16, `--no-fallback`, same 20 cases/grader, production
+budget 5/9): agentic **58/60 (96.7%, 95% CI 88.6–99.1)** vs single-shot
+**43/60 (71.7%, 59.2–81.5)** at mean 2.17 vs 2.36 `llm_calls`. The first live
+runs found and fixed an OpenAI wire-format bug that no offline fake could
+reach; env-var provider pinning proved unreliable on Windows, so a
+`--no-fallback` flag makes live runs provable. Offline assurance: 8/8 sampled
+mutations killed, `loop.py` 96% branch coverage (see TEST.md "Verification
+evidence"). Next: repeat the pinned A/B on a second endpoint (Groq),
+investigate the `sup_chat_vs_email_resolution` failure, and test whether a
+System One op-classifier router can cut calls further (the `OperationRouter`
+seam is in place).
 
 ### Explicitly deferred (per owner decision)
 Python code-interpreter sandboxing (DuckDB chosen instead), auth/multi-user,

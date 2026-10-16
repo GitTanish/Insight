@@ -84,6 +84,7 @@ Optional: MISTRAL/OPENAI/ANTHROPIC/OPENROUTER keys, `OLLAMA_BASE_URL`,
 - Webapp E2E smoke: upload → briefing on page → SSE stages → result HTML → history persist → DOCX(83 KB, w/ findings) → JSON API → clear
 - Editorial charts render correctly (paper #f2ead8 / ink / accent red, serif)
 - LangSmith hierarchy: `insight.analyze` → `planning.plan` → `provider.generate`
+- Agentic pinned A/B on NVIDIA NIM gpt-oss-20b (k=3, `--no-fallback`): agentic **58/60 (96.7%, 95% CI 88.6–99.1)** vs single-shot **43/60 (71.7%, 59.2–81.5)** on the same 20 golden cases — see TEST.md "Verification evidence"
 
 ---
 
@@ -98,13 +99,18 @@ Optional: MISTRAL/OPENAI/ANTHROPIC/OPENROUTER keys, `OLLAMA_BASE_URL`,
 7. **Discovery cap**: `discovery_max_per_provider=40`; OpenRouter ranking = preferred vendors then shortest-name-first; variants (`:batch`) deduped.
 8. **Planner quirk**: small models may set `top_n=1` (charts suffer but numbers stay correct); ChartSpec treats explicit `null` as "use default" (`resolved_top_n/resolved_sort_desc`).
 9. **Artifacts**: plots under `.artifacts/web/<data_id>/` (webapp) vs `.artifacts/<session_id>/` (streamlit). Both gitignored.
+10. **PowerShell env pinning is a trap**: `$env:FOO=''` *removes* the variable; dotenv then refills it from `.env`. That's why live A/B runs use `--no-fallback` (chain pinned in `build_llm_chain`) rather than blanking keys.
+11. **Model-name collision**: Groq and NIM both serve a model literally named `openai/gpt-oss-20b`, so `models_used` alone cannot prove which provider served a run — pin with `--no-fallback` when it matters.
+12. **Quota backoff shape differs**: NIM throttles in bursts (220–330 s single-case walls observed unpinned); Groq's free tier stretches every case (~178 s/case) via internal retry backoff, which leaves `throttled=0` even when the run is quota-bound.
 
 ---
 
 ## 6. Remaining work — build queue (priority order)
 
-> **Status 2026-08-22:** P1–P5 below are DONE. See `future_scope.md` for what's next
-> (multi-file reasoning, Redis sessions, MAR/MNAR diagnostics, SSE-path caching).
+> **Status 2026-10-16:** P1–P8 below are DONE (P8 verified by the pinned live
+> A/B — see TEST.md "Verification evidence"). See `future_scope.md` for what's
+> next (external session storage, live database connections, missingness
+> diagnostics).
 
 ### P1 — Evaluation harness ✅
 `evaluation/generate_datasets.py` (seeded: sales/ecommerce/support + retail_250k;
@@ -204,6 +210,16 @@ call it; agentic skips the plan-repair loop (the loop *is* the repair).
 Streams `tool_call`/`tool_result` SSE events; `app.js` renders a live trail.
 Cache key includes the mode. Tests: `test_agentic_pipeline.py` (20),
 `test_webapp_agentic.py` (4).
+
+**Verification (2026-10-16 deep pass)**: pinned k=3 A/B on NIM `gpt-oss-20b`
+(no fallback) → 58/60 (96.7%) agentic vs 43/60 (71.7%) single-shot; wire-format
+fix + inbound-parser tests in `test_agentic_pipeline.py`; recorded replay
+fixture (`tests/fixtures/agentic_replay_sales_top_region.json` →
+`test_agentic_replay.py`); `tools/mutate.py` sampled mutations 8/8 killed (the
+first round survived one: implicit `filter_rows` narrowing — test added);
+`loop.py` 96% branch coverage; clean-clone bootstrap green (283 passed /
+6 skipped before datasets, 286/3 after `generate_datasets.py`). Details:
+TEST.md "Verification evidence".
 
 **Gotchas**: (1) the SSE drain must `yield await queue.get()` — yielding the
 bare coroutine never drains the queue and spins the generator forever.
