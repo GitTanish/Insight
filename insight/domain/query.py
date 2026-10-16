@@ -25,3 +25,8 @@ class AnalysisRequest(BaseModel):
     # default); True/False forces the mode per question. Every tool call still
     # routes through the deterministic op registry and the same guards.
     agentic: Optional[bool] = None
+    # Pin the run to exactly the requested model: disables the cross-provider
+    # fallback chain, so a failure surfaces as an error instead of being
+    # silently answered by a different model. Used by the evaluation runners
+    # to make single-model measurements provable (models_used attribution).
+    no_fallback: bool = False

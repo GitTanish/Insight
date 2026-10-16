@@ -108,6 +108,7 @@ def run_agentic_eval(
     max_llm_calls: int = 6,
     artifacts_root: Optional[Path] = None,
     record: bool = False,
+    no_fallback: bool = False,
 ) -> tuple[int, int, Path]:
     from insight.analytics.operations import operation_catalog
     from insight.analytics.sql_engine import DuckSession
@@ -128,7 +129,7 @@ def run_agentic_eval(
     if limit:
         cases = cases[:limit]
 
-    primary_info, chain = build_llm_chain(model_id, settings)
+    primary_info, chain = build_llm_chain(model_id, settings, no_fallback=no_fallback)
     model_name = primary_info.model
 
     frames: dict[str, tuple[pd.DataFrame, Any]] = {}
@@ -215,7 +216,8 @@ def run_agentic_eval(
         _write_incremental(artifacts_root, results, model_id)
 
     passed_count = sum(1 for r in results if r["passed"])
-    report = _write_report(results, passed_count, len(results), model_id, artifacts_root)
+    label = (model_id or "(default)") + (" [no fallback]" if no_fallback else "")
+    report = _write_report(results, passed_count, len(results), label, artifacts_root)
     total_calls = sum(r.get("llm_calls", 0) for r in results)
     throttled = sum(1 for r in results if r.get("throttled"))
     print(f"\n{passed_count}/{len(results)} passed | total llm_calls={total_calls} "
@@ -283,11 +285,16 @@ def main() -> int:
     parser.add_argument("--max-llm-calls", type=int, default=6)
     parser.add_argument("--record", action="store_true",
                         help="also write every raw provider exchange to transcript.jsonl")
+    parser.add_argument(
+        "--no-fallback", action="store_true",
+        help="pin to exactly --model: fail rather than answer via another model",
+    )
     args = parser.parse_args()
     passed, total, _ = run_agentic_eval(
         model_id=args.model, limit=args.limit, dataset_filter=args.dataset,
         delay_s=args.delay, max_iterations=args.max_iterations,
         max_llm_calls=args.max_llm_calls, record=args.record,
+        no_fallback=args.no_fallback,
     )
     return 0 if passed == total else 1
 

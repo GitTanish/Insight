@@ -244,7 +244,7 @@ The repository contains **33 tracked test files** (`git ls-files tests/`) that e
 | `test_renderer.py` | Matplotlib chart generation across themes | Checks PNG creation and dimensions; does not check visual chart beauty. |
 | `test_profiler.py` | Column role inference and dataset fingerprinting | Relies on column names for identifier heuristic (`order_id`, `uuid`). |
 | `test_providers.py` | Provider URL construction, headers, retry backoff, tool-call payload/parse shapes | Mocks HTTP client; does not hit real provider endpoints. |
-| `test_registry.py` | Model catalog, sorting, text-model filtering, custom provider env mapping, NVIDIA NIM provider registration (key env, curated model, endpoint URL) | Relies on static catalog definitions. |
+| `test_registry.py` | Model catalog, sorting, text-model filtering, custom provider env mapping, NVIDIA NIM provider registration (key env, curated model, endpoint URL), `no_fallback` chain pinning | Relies on static catalog definitions. |
 | `test_evaluation.py` | Scoring logic (`_numeric_close`, `_ops_satisfied`) | Tests harness itself, not agent performance. Needs `evaluation/data/`, which is gitignored — CI regenerates it. |
 
 ---

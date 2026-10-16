@@ -128,6 +128,7 @@ def run_eval(
     cases_path: Path = DEFAULT_CASES,
     data_dir: Path = DEFAULT_DATA,
     artifacts_root: Optional[Path] = None,
+    no_fallback: bool = False,
 ) -> tuple[int, int, Path]:
     from insight.domain.query import AnalysisRequest
     from insight.orchestrator import run_analysis_sync
@@ -158,7 +159,9 @@ def run_eval(
             frames[name] = (df, profile)
 
         df, profile = frames[name]
-        request = AnalysisRequest(question=case["question"], model_id=model_id)
+        request = AnalysisRequest(
+            question=case["question"], model_id=model_id, no_fallback=no_fallback
+        )
         print(f"[{case['id']}] asking: {case['question'][:70]}...")
         try:
             response = run_analysis_sync(
@@ -195,7 +198,8 @@ def run_eval(
         print(f"[{case['id']}] {'PASS' if passed else 'FAIL'} {reasons if reasons else ''}")
 
     passed_count = sum(1 for r in results if r["passed"])
-    report_path = write_report(results, passed_count, len(results), model_id, artifacts_root)
+    label = (model_id or "(default)") + (" [no fallback]" if no_fallback else "")
+    report_path = write_report(results, passed_count, len(results), label, artifacts_root)
     return passed_count, len(results), report_path
 
 
@@ -251,6 +255,10 @@ def main() -> int:
     parser.add_argument("--dataset", default=None, help="filter to one dataset filename")
     parser.add_argument("--cases", default=str(DEFAULT_CASES))
     parser.add_argument("--data-dir", default=str(DEFAULT_DATA))
+    parser.add_argument(
+        "--no-fallback", action="store_true",
+        help="pin to exactly --model: fail rather than answer via another model",
+    )
     args = parser.parse_args()
 
     passed, total, _ = run_eval(
@@ -259,6 +267,7 @@ def main() -> int:
         dataset_filter=args.dataset,
         cases_path=Path(args.cases),
         data_dir=Path(args.data_dir),
+        no_fallback=args.no_fallback,
     )
     print(f"\n{passed}/{total} cases passed")
     return 0 if passed == total else 1

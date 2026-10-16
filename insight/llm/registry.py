@@ -323,6 +323,7 @@ def build_llm_chain(
     preferred_model_id: str | None,
     settings: Settings | None = None,
     api_key: str | None = None,
+    no_fallback: bool = False,
 ) -> tuple[ModelInfo, list[tuple[LLMProvider, str, ModelInfo]]]:
     settings = settings or get_settings()
     _ensure_custom_registered(settings)
@@ -357,6 +358,8 @@ def build_llm_chain(
     for info in sorted(other_providers, key=lambda m: m.tier != "accurate"):
         add(info.model_id)
 
+    if no_fallback:
+        chain = chain[:1]
     return primary_info, chain
 
 

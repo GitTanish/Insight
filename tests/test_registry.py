@@ -120,3 +120,13 @@ def test_nvidia_provider_curated_model_and_endpoint():
     provider = create_provider("nvidia", s)
     assert provider.name == "nvidia"
     assert provider.base_url == "https://integrate.api.nvidia.com/v1"
+
+
+def test_no_fallback_pins_chain_to_primary_model():
+    s = settings_with(groq_api_key="k", mistral_api_key="k2", openrouter_api_key="k3")
+    primary, chain = build_llm_chain(
+        "mistral/mistral-small-latest", s, no_fallback=True
+    )
+    assert primary.provider == "mistral"
+    assert len(chain) == 1
+    assert chain[0][2].model_id == primary.model_id
