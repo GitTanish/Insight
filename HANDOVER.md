@@ -84,7 +84,7 @@ Optional: MISTRAL/OPENAI/ANTHROPIC/OPENROUTER keys, `OLLAMA_BASE_URL`,
 - Webapp E2E smoke: upload → briefing on page → SSE stages → result HTML → history persist → DOCX(83 KB, w/ findings) → JSON API → clear
 - Editorial charts render correctly (paper #f2ead8 / ink / accent red, serif)
 - LangSmith hierarchy: `insight.analyze` → `planning.plan` → `provider.generate`
-- Agentic pinned A/B on NVIDIA NIM gpt-oss-20b (k=3, `--no-fallback`): agentic **58/60 (96.7%, 95% CI 88.6–99.1)** vs single-shot **43/60 (71.7%, 59.2–81.5)** on the same 20 golden cases — see TEST.md "Verification evidence"
+- Agentic pinned A/B on NVIDIA NIM gpt-oss-20b (k=3, `--no-fallback`): measured 58/60 (96.7%, 95% CI 88.6–99.1) vs single-shot 43/60 (71.7%, 59.2–81.5) — but the 2026-10-17 follow-up showed **most of that gap was a provider-side truncation bug that only hit the single-shot planner** (see TEST.md "What failed" #3); post-fix k=1 confirmations: 20/20 agentic vs 19/20 single-shot — **accuracy parity on this endpoint; the agentic edge is auditability + tool trail**. Raw numbers: TEST.md "Verification evidence"
 
 ---
 
@@ -102,6 +102,7 @@ Optional: MISTRAL/OPENAI/ANTHROPIC/OPENROUTER keys, `OLLAMA_BASE_URL`,
 10. **PowerShell env pinning is a trap**: `$env:FOO=''` *removes* the variable; dotenv then refills it from `.env`. That's why live A/B runs use `--no-fallback` (chain pinned in `build_llm_chain`) rather than blanking keys.
 11. **Model-name collision**: Groq and NIM both serve a model literally named `openai/gpt-oss-20b`, so `models_used` alone cannot prove which provider served a run — pin with `--no-fallback` when it matters.
 12. **Quota backoff shape differs**: NIM throttles in bursts (220–330 s single-case walls observed unpinned); Groq's free tier stretches every case (~178 s/case) via internal retry backoff, which leaves `throttled=0` even when the run is quota-bound.
+13. **Reasoning-capable models need their capability flag declared**: NIM `gpt-oss-20b` without `supports_reasoning_effort` silently loses the configured `reasoning_effort="low"`; it then burns the whole `max_tokens` budget in the reasoning channel and returns `finish_reason=length` with empty content. Fixed 2026-10-17 (registry flag + `hit max_tokens=N` hint in the empty-content error) — when curating *new* NIM/reasoning models, set the flag deliberately.
 
 ---
 
@@ -211,18 +212,20 @@ Streams `tool_call`/`tool_result` SSE events; `app.js` renders a live trail.
 Cache key includes the mode. Tests: `test_agentic_pipeline.py` (20),
 `test_webapp_agentic.py` (4).
 
-**Verification (2026-10-16 deep pass)**: pinned k=3 A/B on NIM `gpt-oss-20b`
-(no fallback) → 58/60 (96.7%) agentic vs 43/60 (71.7%) single-shot; wire-format
-fix + inbound-parser tests in `test_agentic_pipeline.py`; recorded replay
+**Verification (2026-10-16/17 deep pass)**: pinned k=3 A/B on NIM `gpt-oss-20b`
+(no fallback) → measured 58/60 (96.7%) agentic vs 43/60 (71.7%) single-shot;
+the 2026-10-17 diagnosis then showed 13 of the 17 baseline failures were a NIM
+planner-truncation bug (missing `reasoning_effort` flag → reasoning consumed
+`max_tokens` → empty content, reproduced 4/4), fixed same-day; post-fix k=1
+confirmations: agentic 20/20, single-shot 19/20 (**parity**). Wire-format
+fix + inbound-parser tests in `test_agentic_pipeline.py`; harmony-token
+sanitizer for inbound tool names (also 2026-10-17); recorded replay
 fixture (`tests/fixtures/agentic_replay_sales_top_region.json` →
-`test_agentic_replay.py`); `tools/mutate.py` sampled mutations 9/9 killed (the
-first round survived one: implicit `filter_rows` narrowing — test added; the
-ninth covers the harmony-token sanitizer); `loop.py` 96% branch coverage;
-clean-clone bootstrap green (283 passed / 6 skipped before datasets, 286/3
-after `generate_datasets.py`). Live SSE trail smoke
-(`tools/sse_smoke.py`, 2026-10-17): tool_call → tool_result ordering and
-streamed deltas confirmed against a running uvicorn; post-fix pinned run
-20/20. Details: TEST.md "Verification evidence".
+`test_agentic_replay.py`); `tools/mutate.py` sampled mutations 11/11 killed;
+`loop.py` 96% branch coverage; clean-clone bootstrap green (283 passed /
+6 skipped before datasets, 286/3 after `generate_datasets.py`); live SSE trail
+smoke `tools/sse_smoke.py` (tool_call → tool_result ordering, streamed deltas).
+Details: TEST.md "Verification evidence".
 
 **Gotchas**: (1) the SSE drain must `yield await queue.get()` — yielding the
 bare coroutine never drains the queue and spins the generator forever.

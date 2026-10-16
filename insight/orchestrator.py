@@ -89,8 +89,17 @@ class _Chain:
                 if not (response.content or "").strip() and not (
                     response.tool_calls or []
                 ):
+                    hint = ""
+                    if (
+                        effective.max_tokens
+                        and response.completion_tokens == effective.max_tokens
+                    ):
+                        hint = (
+                            f" (hit max_tokens={effective.max_tokens}; the model "
+                            "likely spent the whole budget on internal reasoning)"
+                        )
                     raise InsightError(
-                        f"{provider.name}/{model} returned empty content"
+                        f"{provider.name}/{model} returned empty content{hint}"
                     )
                 self.last_used = f"{provider.name}/{model}"
                 self.llm_calls += 1

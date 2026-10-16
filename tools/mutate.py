@@ -5,7 +5,8 @@ this is the substitute: apply curated single-site mutations, run a scoped test
 selection after each, restore the file byte-for-byte, and report killed vs
 survived. The mutations are deliberately aimed at the claims the docs make
 (budget caps, repeated-failure abort, throttle classification, frame chaining,
-input_step validation, HITL precedence) - this is *sampled* mutation testing
+input_step validation, reasoning-effort stripping, the truncation hint, HITL
+precedence) - this is *sampled* mutation testing
 to show the targeted tests have teeth, not an exhaustive coverage score.
 
 Usage:
@@ -99,6 +100,24 @@ MUTATIONS: list[dict] = [
         "new": "name = name",
         "tests": [
             "tests/test_agentic_pipeline.py",
+        ],
+    },
+    {
+        "label": "reasoning_effort stripping disabled (unsupported models would get the param)",
+        "file": "insight/orchestrator.py",
+        "old": "if info.supports_reasoning_effort is False:",
+        "new": "if False:",
+        "tests": [
+            "tests/test_chain_fallback.py",
+        ],
+    },
+    {
+        "label": "truncation hint dropped from the empty-content error",
+        "file": "insight/orchestrator.py",
+        "old": "and response.completion_tokens == effective.max_tokens",
+        "new": "and False",
+        "tests": [
+            "tests/test_chain_fallback.py",
         ],
     },
     {

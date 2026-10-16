@@ -121,6 +121,10 @@ def test_nvidia_provider_curated_model_and_endpoint():
     provider = create_provider("nvidia", s)
     assert provider.name == "nvidia"
     assert provider.base_url == "https://integrate.api.nvidia.com/v1"
+    # Without this flag the orchestrator strips reasoning_effort and NIM's
+    # gpt-oss-20b defaults to verbose reasoning that exhausts the planner's
+    # max_tokens budget without ever emitting content (diagnosed 2026-10-17).
+    assert MODEL_CATALOG["nvidia/openai/gpt-oss-20b"].supports_reasoning_effort
 
 
 def test_groq2_second_account_alias():

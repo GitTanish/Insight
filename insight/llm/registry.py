@@ -114,7 +114,8 @@ PROVIDERS: dict[str, ProviderSpec] = {
         cls=NvidiaProvider,
         api_key_env="NVIDIA_API_KEY",
         curated_models=(
-            ("openai/gpt-oss-20b", "fast", {}),
+            ("openai/gpt-oss-20b", "fast",
+             {"supports_json_mode": True, "supports_reasoning_effort": True}),
         ),
         supports_discovery=True,
         default_timeout_s=90.0,
