@@ -279,8 +279,9 @@ Insight is **model-agnostic**: every provider sits behind one `LLMProvider` inte
 | **OpenAI** | `OPENAI_API_KEY` | gpt-4o family + live discovery |
 | **Anthropic** | `ANTHROPIC_API_KEY` | Claude models + live discovery |
 | **OpenRouter** | `OPENROUTER_API_KEY` | 400+ aggregated models, curated discovery |
+| **NVIDIA NIM** | `NVIDIA_API_KEY` | gpt-oss-20b + live discovery (40 req/min tool-calling endpoints) |
 | **Ollama** (local) | `OLLAMA_BASE_URL` or `INSIGHT_ENABLE_OLLAMA=1` | whatever you have pulled |
-| **Any OpenAI-compatible service** | `INSIGHT_CUSTOM_BASE_URL` + `INSIGHT_CUSTOM_API_KEY` (+ `INSIGHT_CUSTOM_MODELS`) | NVIDIA NIM, DeepSeek, Together, Fireworks, vLLM, LM Studio… |
+| **Any OpenAI-compatible service** | `INSIGHT_CUSTOM_BASE_URL` + `INSIGHT_CUSTOM_API_KEY` (+ `INSIGHT_CUSTOM_MODELS`) | DeepSeek, Together, Fireworks, vLLM, LM Studio… |
 
 See [.env.example](.env.example) for the full template. Model capabilities (JSON mode, reasoning effort) are declared per model; the orchestrator strips unsupported parameters automatically and falls back across providers when a 429/5xx hits. Copy `.env.example` to `.env` and fill in what you have:
 
@@ -291,10 +292,7 @@ cp .env.example .env
 Example — NVIDIA NIM (40 req/min, tool calling included):
 
 ```bash
-INSIGHT_CUSTOM_NAME=nvidia
-INSIGHT_CUSTOM_BASE_URL=https://integrate.api.nvidia.com/v1
-INSIGHT_CUSTOM_API_KEY=nvapi-...
-INSIGHT_CUSTOM_MODELS=openai/gpt-oss-20b
+NVIDIA_API_KEY=nvapi-...
 # then use it anywhere a model id is accepted:
 # python evaluation/run_eval_agentic.py --model nvidia/openai/gpt-oss-20b
 ```

@@ -23,6 +23,7 @@ def settings_with(**keys):
         "openai_api_key": None,
         "anthropic_api_key": None,
         "openrouter_api_key": None,
+        "nvidia_api_key": None,
         "ollama_base_url": None,
         "enable_ollama": False,
         "custom_base_url": None,
@@ -110,3 +111,12 @@ def test_static_catalog_contains_curated_entries():
     assert MODEL_CATALOG["groq/openai/gpt-oss-120b"].supports_reasoning_effort
     assert "mistral/mistral-small-latest" in MODEL_CATALOG
     assert DISCOVERED.get("nonexistent") is None
+
+
+def test_nvidia_provider_curated_model_and_endpoint():
+    s = settings_with(nvidia_api_key="nvapi-test")
+    models = available_models(s)
+    assert "nvidia/openai/gpt-oss-20b" in {m.model_id for m in models}
+    provider = create_provider("nvidia", s)
+    assert provider.name == "nvidia"
+    assert provider.base_url == "https://integrate.api.nvidia.com/v1"

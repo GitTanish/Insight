@@ -148,6 +148,7 @@ def _live_provider_available() -> bool:
         or settings.openai_api_key
         or settings.anthropic_api_key
         or settings.openrouter_api_key
+        or settings.nvidia_api_key
         or settings.custom_base_url
     )
 

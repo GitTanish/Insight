@@ -12,6 +12,7 @@ from insight.llm.base import LLMProvider
 from insight.llm.providers.anthropic import AnthropicProvider
 from insight.llm.providers.groq import GroqProvider
 from insight.llm.providers.mistral import MistralProvider
+from insight.llm.providers.nvidia import NvidiaProvider
 from insight.llm.providers.ollama import OllamaProvider
 from insight.llm.providers.openai import OpenAIProvider
 from insight.llm.providers.openai_compat import OpenAICompatibleProvider
@@ -92,6 +93,16 @@ PROVIDERS: dict[str, ProviderSpec] = {
         api_key_env="OPENROUTER_API_KEY",
         curated_models=(
             ("openai/gpt-4o-mini", "fast", {}),
+        ),
+        supports_discovery=True,
+        default_timeout_s=90.0,
+    ),
+    "nvidia": ProviderSpec(
+        name="nvidia",
+        cls=NvidiaProvider,
+        api_key_env="NVIDIA_API_KEY",
+        curated_models=(
+            ("openai/gpt-oss-20b", "fast", {}),
         ),
         supports_discovery=True,
         default_timeout_s=90.0,

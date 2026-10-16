@@ -27,6 +27,9 @@ class Settings(BaseModel):
     openrouter_api_key: str | None = Field(
         default_factory=lambda: os.getenv("OPENROUTER_API_KEY") or None
     )
+    nvidia_api_key: str | None = Field(
+        default_factory=lambda: os.getenv("NVIDIA_API_KEY") or None
+    )
     ollama_base_url: str | None = Field(
         default_factory=lambda: os.getenv("OLLAMA_BASE_URL") or None
     )
