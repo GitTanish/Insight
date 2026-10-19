@@ -103,6 +103,43 @@ Benchmark it against the single-shot planner with the same golden cases and grad
 
 The harness paid for itself on its first live runs. It exposed an OpenAI wire-format bug in the assistant tool-call history that no scripted fake could see (every second turn was a hard HTTP 400; fixed and pinned by tests). It also proved that env-var provider pinning is unreliable on Windows — hence `--no-fallback` for provable single-model runs.
 
+## MCP server (use the engine from any agent)
+
+Insight ships an MCP server so any MCP-capable client (Claude Desktop, Cursor, opencode, a cron worker, your own agent) can load tables, run the registered operations, sandboxed SQL, or full DAG plans — and **verify any narrative against computed evidence** before it reaches a user. No LLM calls happen inside the server; everything is pandas/scipy/sandboxed DuckDB.
+
+```bash
+python -m insight.mcp_server                        # stdio (default)
+INSIGHT_MCP_TRANSPORT=streamable-http python -m insight.mcp_server
+```
+
+```jsonc
+// mcp client config (stdio example)
+{
+  "mcpServers": {
+    "insight": {
+      "command": "C:\\path\\to\\Insight\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "insight.mcp_server"]
+    }
+  }
+}
+```
+
+| Tool | What it does |
+|---|---|
+| `load_table` | register inline CSV text or a file path (`.xlsx` expands to one table per sheet) |
+| `list_tables` / `profile_table` | row counts, schemas, column-level profiles |
+| `list_operations` | the 15 registered ops with their parameter schemas |
+| `execute_operation` | run one op through the same registry + column validation as the webapp |
+| `run_plan` | validate and execute a full `AnalysisPlan` DAG (`input_step` chaining included) |
+| `run_sql` | one read-only SELECT/WITH statement in the DuckDB sandbox |
+| `verify_claims` | check every number in prose against computed evidence; returns `ungrounded_numbers` plus independent-recomputation issues |
+
+The typical agent flow is `load_table → execute_operation/run_plan → write the answer → verify_claims` with the returned `run_id`; anything flagged as ungrounded or mismatched is fixed before the user sees it. The toolkit that backs the server (`insight/toolkit.py`) is importable directly for code-first callers.
+
+Validated against real public data by `tools/smoke_toolkit.py` — 54 checks across superstore, Palmer penguins, telco churn, daily temperatures and the generated evaluation corpora: all 15 ops, SQL sandbox rejections, DAG chaining, verification gates and the MCP flow, each cross-checked against independent pandas/numpy/scipy results and the seeded ground truth. Full evidence: `TEST.md` → "Toolkit + MCP real-data smoke".
+
+Config: `INSIGHT_MCP_TRANSPORT` (`stdio` | `sse` | `streamable-http`), `INSIGHT_MCP_HOST` (default `127.0.0.1`), `INSIGHT_MCP_PORT` (default `8765`).
+
 ## Alert runner
 
 A SQL answer exports an **Alert monitor**: query + cron hint + threshold + Slack-ready webhook template. `tools/alert_runner.py` is the companion worker that closes the loop:
@@ -144,6 +181,7 @@ This is the only built-in access gate. See the [deployment note](#configuration)
 - **Human-in-the-loop plan approval** — with `INSIGHT_PLAN_APPROVAL=on`, every question stops at an editable plan (the exact operations, as JSON) that you approve before anything runs. Approved plans are *re-validated against your schema*, so a hand-edit naming a nonexistent column is rejected rather than silently trusted.
 - **Live pipeline streaming** — watch *Planning → Executing → Validating → Explaining* happen in real time over SSE.
 - **Headless JSON API** — `POST /api/query` exposes the same verified pipeline for scripts and integrations. Send `plan_only: true` to get a reviewable plan back instead of an answer, or `agentic: true` for one tool-calling run.
+- **MCP server + verification toolkit** — `python -m insight.mcp_server` exposes the deterministic ops, sandboxed SQL, DAG plans, and `verify_claims` (number grounding + independent recomputation for any prose) to MCP clients like Claude Desktop, Cursor, or opencode. `insight/toolkit.py` is the same API as a plain Python import; no LLM inside.
 - **Query-result cache** — identical (dataset hash, question, model, temperature, session state) hits are served from `.artifacts/cache/` with TTL + size-budget eviction (`INSIGHT_QUERY_CACHE=off` to disable). It serves the streaming UI path too: ~20× faster on repeats.
 - **Prefix-cached prompts** — the planner's system prompt stays byte-stable per dataset (per-turn state lives in later messages, not the prefix), so providers serve it from their prompt cache. Reported as `cached_prompt_tokens`.
 - **Golden-question eval harness** — 20 seeded and real benchmark cases (including the 54K-row diamonds dataset and a 250K-row synthetic retail set) with exact ground truth. `evaluation/run_eval.py` scores the single-shot path; `run_eval_agentic.py` runs the same cases and grader through the agentic loop (token/wall/model telemetry, optional raw transcripts via `--record`, `--no-fallback` for provable single-model runs); `ab_stats.py` aggregates k repetitions into per-case pass counts and Wilson CIs. The agentic loop additionally carries sampled mutation tests (11/11 killed) and 96% branch coverage.
@@ -370,6 +408,9 @@ main.py                  Streamlit entry point (legacy UI, same engine)
 │   ├── conversation/    AnalysisSessionState — filters/dims/metrics across turns
 │   ├── execution/       Plan executor (sync core, async wrapper, input_step DAG)
 │   ├── validation/      Result validator + independent recomputation checks
+│   ├── ingest.py        shared CSV/Excel parsing (webapp + toolkit)
+│   ├── toolkit.py       agent-facing engine API: load/run/verify, no LLM
+│   ├── mcp_server.py    MCP wrapper exposing the toolkit (stdio/HTTP)
 │   ├── cache.py         query-result cache (TTL + size-budget eviction)
 │   ├── reports/         shared DOCX builder + dbt/alert artifact generators
 │   ├── visualization/   Editorial theme + chart renderer from ChartSpec
@@ -377,7 +418,7 @@ main.py                  Streamlit entry point (legacy UI, same engine)
 │   ├── settings.py      env-var config model — every INSIGHT_* default lives here
 │   └── orchestrator.py  plan → execute → validate → repair → render → explain (+ streaming variant)
 ├── evaluation/          golden-question harness: generator, 20 cases, single-shot + agentic runners, k-rep aggregator, scorer/reporter
-├── tools/               companion workers (alert_runner: cron → DuckDB → webhook) + mutation sampler + SSE smoke test
+├── tools/               companion workers (alert_runner: cron → DuckDB → webhook) + mutation sampler + SSE smoke test + real-data toolkit/MCP smoke (smoke_toolkit)
 ├── tests/               pytest suite (fake LLM + adversarial agentic suite, zero network needed)
 ├── promo/               standalone 30s product film, rendered frame-by-frame from code (see promo/README.md)
 ├── data/                sample datasets used by tests and logs
@@ -481,7 +522,7 @@ Tracing is fully optional — with no key the engine runs identically and posts 
 
 ## Roadmap
 
-Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · token-by-token answer streaming & prefix caching ✅ · human-in-the-loop plan approval ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction (API & SSE streaming paths) ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅ · agentic tool-use mode + alert-runner companion worker ✅ · agentic A/B eval harness + k-rep aggregator ✅
+Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · token-by-token answer streaming & prefix caching ✅ · human-in-the-loop plan approval ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction (API & SSE streaming paths) ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅ · agentic tool-use mode + alert-runner companion worker ✅ · agentic A/B eval harness + k-rep aggregator ✅ · MCP server + verification toolkit for external agents ✅
 
 **Up next** (detailed notes in [HANDOVER.md](HANDOVER.md) and [future_scope.md](future_scope.md)):
 

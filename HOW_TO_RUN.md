@@ -120,6 +120,25 @@ curl -X POST http://localhost:8000/api/query \
      -d '{"question": "Which region leads, and by how much?", "agentic": true}'
 ```
 
+### Use the engine from another agent (MCP / toolkit, no LLM)
+
+Any MCP-capable client (Claude Desktop, Cursor, opencode, a cron worker) can
+drive the deterministic engine — load tables, run ops/DAG plans/sandboxed SQL,
+and verify numbers in prose against computed evidence:
+
+```bash
+python -m insight.mcp_server        # stdio (default); SSE/streamable-http via INSIGHT_MCP_TRANSPORT
+```
+
+`insight/toolkit.py` is the same API as a plain Python import. Client config
+and the tool table live in `README.md` → "MCP server". Validate the whole path
+on real public data (downloads 4 CSVs on first run; needs `evaluation/data/`):
+
+```bash
+python evaluation/generate_datasets.py   # once, if evaluation/data/ is missing
+python tools/smoke_toolkit.py            # 54 checks: 15 ops, SQL sandbox, DAG, verification, MCP
+```
+
 ### Optional: run an exported alert monitor
 
 A SQL answer in the webapp offers **Alert monitor**, which downloads a JSON

@@ -19,3 +19,4 @@ langsmith>=0.1,<1
 duckdb>=1.0,<2
 openpyxl>=3.1,<4
 pytest-asyncio>=0.23,<2
+mcp>=1.0,<2

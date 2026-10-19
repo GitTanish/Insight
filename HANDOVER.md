@@ -1,6 +1,6 @@
 # INSIGHT — Session Handover
 
-> Last updated: 2026-10-13 · Engine v2.2.0-alpha · **offline suite green** · **20/20 live eval cases** · Python 3.11 venv at `.venv`
+> Last updated: 2026-10-20 · Engine v2.2.0-alpha · **offline suite green** · **20/20 live eval cases** · **MCP server + verification toolkit (smoke-verified on real data)** · Python 3.11 venv at `.venv`
 > Branch note: agentic tool-use mode + alert runner are on `main` (merge `29dcc19`); `feat/agentic-tool-use` carries the subsequent live-verification/hardening pass (providers, eval infra, wire-level fixes, verification docs) as an open PR.
 
 ---
@@ -40,11 +40,14 @@ Both front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `web
 | `insight/briefing.py` | zero-prompt detectors: trend/corr/outliers/imbalance/missing/dupes → ranked findings |
 | `insight/execution/executor.py` | sequential executor; `frames` dict enables `input_step` DAG; filter_rows mutates implicit chain |
 | `insight/validation/` | `result_validator.py` (sanity/small-sample/chart-consistency) + `verification.py` (**independent recomputation**) |
+| `insight/ingest.py` | shared CSV/Excel parsing (delimiter sniffing, encodings, row caps) used by the webapp and the toolkit |
+| `insight/toolkit.py` | **agent-facing engine API** — load tables, run ops/plans/sandboxed SQL, `verify_claims`; records runs for grounding + independent recomputation. No LLM |
+| `insight/mcp_server.py` | MCP wrapper over the toolkit (`python -m insight.mcp_server`; stdio / sse / streamable-http) |
 | `insight/visualization/` | `themes.py` (editorial/minimal/dark) + `renderer.py` (ChartSpec→PNG; adaptive bins live in distribution op; Other-bucket, horizontal-bar, tick formatting here) |
 | `insight/orchestrator.py` | `analyze_stream()` async generator (stage / delta / plan_review events) wrapped by `analyze()`; `run_analysis_sync()` for sync UIs. Owns cache, timing meta (`planning_ms`, `repair_ms`, `first_token_ms`, …) and the HITL gate |
 | `insight/observability.py` | LangSmith tracing (optional; `INSIGHT_TRACING=off` kills it) — root run + `trace_phase` spans |
 | `insight/settings.py` | all config via env; `.env` auto-loaded |
-| `webapp/` | FastAPI: `app.py` routes, `sessions.py` cookie store, `services.py` streamlit-free IO, Jinja `templates/`, `static/` (CSS + app.js SSE client w/ typing bubble + plan review + live agent tool trail) |
+| `webapp/` | FastAPI: `app.py` routes, `sessions.py` cookie store, `services.py` thin webapp IO (delegates parsing to `insight/ingest.py`), Jinja `templates/`, `static/` (CSS + app.js SSE client w/ typing bubble + plan review + live agent tool trail) |
 | `ui_components.py` / `utils.py` / `main.py` | Streamlit legacy UI (same engine via cached wrappers) |
 | `tests/` | Offline suite, green in CI (fake providers / scripted chains). Key fixtures in `conftest.py`. Pass/skip split varies by platform and by which optional corpora are present — assert exit code, not count |
 
@@ -67,6 +70,10 @@ pytest -q                                  # expect exit 0 (~30-70s on Windows)
 # headless API
 curl -X POST localhost:8000/api/query -H "Content-Type: application/json" \
      -d '{"question":"Which region has the highest revenue?"}'
+
+# toolkit + MCP smoke on real public data (manual, not CI; first run downloads 4 CSVs
+# into data/ — needs evaluation/data/, generated once via evaluation/generate_datasets.py)
+python tools/smoke_toolkit.py               # 54 checks: 15 ops + SQL sandbox + DAG + verify_claims + MCP
 ```
 
 Env: copy `.env.example` → `.env`. Minimum `GROQ_API_KEY=gsk_...`.
@@ -85,6 +92,7 @@ Optional: MISTRAL/OPENAI/ANTHROPIC/OPENROUTER keys, `OLLAMA_BASE_URL`,
 - Editorial charts render correctly (paper #f2ead8 / ink / accent red, serif)
 - LangSmith hierarchy: `insight.analyze` → `planning.plan` → `provider.generate`
 - Agentic pinned A/B on NVIDIA NIM gpt-oss-20b (k=3, `--no-fallback`): measured 58/60 (96.7%, 95% CI 88.6–99.1) vs single-shot 43/60 (71.7%, 59.2–81.5) — but the 2026-10-17 follow-up showed **most of that gap was a provider-side truncation bug that only hit the single-shot planner** (see TEST.md "What failed" #3); post-fix k=1 confirmations: 20/20 agentic vs 19/20 single-shot — **accuracy parity on this endpoint; the agentic edge is auditability + tool trail**. Raw numbers: TEST.md "Verification evidence"
+- Toolkit + MCP server smoke-verified on real data (`tools/smoke_toolkit.py`, 2026-10-20): 54/54 checks across superstore / penguins / telco / temps + the generated corpora vs independent pandas/numpy/scipy and `ground_truth.json` (Brier 0.17746 / ECE 0.0613), including the MCP in-memory client flow; the pass caught + fixed a double-bracket `filters` shape hint in the auto-catalog and a `SettingWithCopyWarning` on ops mutating filtered frames (pinned by 3 new `test_operations.py` tests)
 
 ---
 
@@ -103,13 +111,15 @@ Optional: MISTRAL/OPENAI/ANTHROPIC/OPENROUTER keys, `OLLAMA_BASE_URL`,
 11. **Model-name collision**: Groq and NIM both serve a model literally named `openai/gpt-oss-20b`, so `models_used` alone cannot prove which provider served a run — pin with `--no-fallback` when it matters.
 12. **Quota backoff shape differs**: NIM throttles in bursts (220–330 s single-case walls observed unpinned); Groq's free tier stretches every case (~178 s/case) via internal retry backoff, which leaves `throttled=0` even when the run is quota-bound.
 13. **Reasoning-capable models need their capability flag declared**: NIM `gpt-oss-20b` without `supports_reasoning_effort` silently loses the configured `reasoning_effort="low"`; it then burns the whole `max_tokens` budget in the reasoning channel and returns `finish_reason=length` with empty content. Fixed 2026-10-17 (registry flag + `hit max_tokens=N` hint in the empty-content error) — when curating *new* NIM/reasoning models, set the flag deliberately.
+14. **The public superstore / telco CSV copies are polluted (2026-10-20)**: `leonism/sample-superstore` concatenates unrelated sample tables after the real 9,994 rows of `data/superstore.csv` (a People/Region block, then Returns) — slice to the first block (`iloc[:9994]`) for any manual use, as `tools/smoke_toolkit.py` does. The `KimathiNewton/Telco-Customer-Churn` copy stores `SeniorCitizen` as `False/True/0/1` strings and blanks in `TotalCharges`; the ops' numeric coercion handles it, but pandas `== 1` comparisons silently match nothing.
 
 ---
 
 ## 6. Remaining work — build queue (priority order)
 
-> **Status 2026-10-16:** P1–P8 below are DONE (P8 verified by the pinned live
-> A/B — see TEST.md "Verification evidence"). See `future_scope.md` for what's
+> **Status 2026-10-20:** P1–P9 below are DONE (P8 verified by the pinned live
+> A/B, P9 by the real-data smoke — see TEST.md "Verification evidence" and
+> "Toolkit + MCP real-data smoke"). See `future_scope.md` for what's
 > next (external session storage, live database connections, missingness
 > diagnostics).
 
@@ -243,6 +253,27 @@ State-change alerting (post on trigger edge, `--notify-recovery`,
 `--webhook` override, URL from the monitor's `webhook.url_env`. Stdlib-only.
 Tests: `test_alert_runner.py` (11).
 
+### P9 — MCP server + agent verification toolkit ✅
+`insight/toolkit.py`: agent-facing engine API (no LLM) — load tables (CSV/Excel
+via shared `insight/ingest.py`), run ops / DAG plans / sandboxed SQL, and
+`verify_claims` (number grounding in prose + independent recomputation); every
+run recorded so evidence can be replayed and tamper-checked.
+`insight/mcp_server.py`: FastMCP wrapper, 8 tools (list_operations, load_table,
+list_tables, profile_table, execute_operation, run_plan, run_sql, `verify_claims`),
+`python -m insight.mcp_server`, stdio / sse / streamable-http via
+`INSIGHT_MCP_*` envs; `webapp/services.py` now a thin re-export of the shared
+parser. Tests: `test_toolkit.py` (25) + `test_mcp_server.py` (7, in-memory
+client). **Verification (2026-10-20)**: `tools/smoke_toolkit.py` — 54/54 checks
+on four public datasets + the generated corpora across all 15 ops, SQL sandbox
+rejections, DAG chaining, verification gates and an MCP end-to-end flow, each
+cross-checked against independent pandas/numpy/scipy results and
+`ground_truth.json` (retail_250k load 1–15 s, filtered group_aggregate
+0.04–0.12 s). The pass fixed a double-bracket `filters` shape hint in
+`operation_catalog()` (models require a flat `list[Filter]`) and made
+`apply_filters` results mutation-safe (was emitting `SettingWithCopyWarning` on
+filtered group ops) + 3 regression tests. Details: TEST.md "Toolkit + MCP
+real-data smoke".
+
 ### Explicitly deferred (per owner decision, do not start unprompted)
 Container/subprocess sandboxing (no codegen exists), FastAPI auth/multi-user, PDF export, dashboards.
 
@@ -263,6 +294,7 @@ Container/subprocess sandboxing (no codegen exists), FastAPI auth/multi-user, PD
 
 ```bash
 pytest -q                     # expect exit 0; skips vary by platform and optional corpora
+python tools/smoke_toolkit.py # manual: toolkit + MCP on real public data (needs evaluation/data/)
 uvicorn webapp.app:app --port 8000   # boot, upload any CSV, run one query, check SSE stages + View plan
 python evaluation/run_eval.py --model groq/openai/gpt-oss-120b   # golden-question benchmark
 ```

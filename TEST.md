@@ -209,11 +209,11 @@ To verify whether Insight is *actually correct* rather than merely returning pla
 
 ### Offline Unit & Integration Test Suite (`tests/`)
 
-The repository contains **37 tracked test files** (`git ls-files tests/`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 — **never** an absolute test count (see Documentation Discrepancies).
+The repository contains **39 tracked test files** (`git ls-files tests/`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 — **never** an absolute test count (see Documentation Discrepancies).
 
 | Test File | What It Actually Exercises | Weaknesses / False-Confidence Risks |
 |---|---|---|
-| `test_operations.py` | 15 deterministic operations under normal data | Does not test extreme null cascades (covered in `test_invariants.py`). |
+| `test_operations.py` | 15 deterministic operations under normal data; filtered frames stay mutation-safe (originals untouched, no `SettingWithCopyWarning`); the auto-catalog renders `filters ({column, op, value}[])` — flat, never `[][]` | Does not test extreme null cascades (covered in `test_invariants.py`). |
 | `test_statistics.py` | SciPy routing, t-test, ANOVA, OLS, isotonic PAV | Relies on synthetic distributions; extreme collinearity not fully stressed. |
 | `test_sql_engine.py` | DuckDB session setup, table sanitization, keyword guards, watchdog interrupt, describe | Tests keyword blocklist, but does not test exotic DuckDB extensions. |
 | `test_validator.py` | Sanity checks, empty table detection, MCAR caveats | Does not test multi-step DAG validation where intermediate steps fail. |
@@ -233,6 +233,8 @@ The repository contains **37 tracked test files** (`git ls-files tests/`) that e
 | `test_agentic.py` | Deterministic follow-up suggestion ranking | Heuristic scoring only. |
 | `test_agentic_tools.py` | Tool-schema generation (every op → a tool, self-contained JSON, Anthropic shape), dispatch rejection paths, loop budgets/throttle | Loop-only; no orchestrator integration. |
 | `test_agentic_pipeline.py` | Loop→rebuild→shared-tail integration: multi-call turns, `input_step` chaining, repeated-failure abort, SSE event sink, plan/execution rebuild, chart synthesis, meta telemetry, orchestrator E2E, grounding flags invented numbers, throttle/provider-failure error paths, cache separation, `plan_only` precedence, `artifacts_dir=None` | Entirely scripted responses — offline by construction; live behavior is exercised separately by `evaluation/run_eval_agentic.py` (see the Golden-Question Evaluation Harness section for what has actually been measured). |
+| `test_toolkit.py` | Agent toolkit core: CSV/Excel loading (incl. delimiter sniffing), profiles, op execution, DAG plans (chained derived columns), SQL joins + sandbox blocks, `verify_claims` grounded/ungrounded paths, caller-supplied evidence, tampered-execution detection | No LLM involved by design; grounding coverage mirrors `test_invariants.py`. |
+| `test_mcp_server.py` | MCP surface via in-memory client: all 8 tools registered, load→run→verify flow, structured error payloads, run_id verification, caller evidence, transport guard | In-memory session; no stdio/HTTP transport smoke test. |
 | `test_agentic_replay.py` | Record/replay: a trimmed transcript of the first pinned live NIM run (`tests/fixtures/agentic_replay_sales_top_region.json`) is replayed through the real loop — dispatch and op execution are live code, only the LLM is recorded; skips when `evaluation/data/` is absent | One recorded happy path; replay proves determinism, not live variance. |
 | `test_text_streaming.py` | Token-by-token SSE deltas, `first_token_ms`, live typing-bubble rendering, reduced-motion caret | Chunking and browser rendering are stubbed/asserted on markup, not observed live. |
 | `test_prompt_cache.py` | Planner system-prompt byte stability (the prefix-cache prefix), `cache_prompt` flag set, `cached_prompt_tokens` accounting | Uses a stubbed usage block; real provider cache hits not asserted. |
@@ -300,6 +302,21 @@ Claim → check matrix for the agentic layer. **A claim without a check below is
 **Branch coverage** (`coverage run --branch` over the agentic + provider test selection): `insight/tools/loop.py` **96%** branch; `insight/tools/` between 75% and 100% (scoped total 81%). Remaining `openai_compat.py` misses are the SSE stream parser, `list_models` discovery and retry-sleep branches — pre-existing non-agentic paths; the wire-format functions are fully covered.
 
 **Clean-clone bootstrap** (2026-10-16): `git clone` → fresh venv → `pip install -r requirements.txt -r requirements-dev.txt` → `pytest -q` = **283 passed, 6 skipped, exit 0** — missing datasets cause skips, never failures. After `python evaluation/generate_datasets.py`: **286 passed, 3 skipped**; the residual skips need `.env` provider keys, a manual `diamonds.csv`, or `INSIGHT_RUN_EVAL=1`.
+
+### Toolkit + MCP real-data smoke (2026-10-20)
+
+`python tools/smoke_toolkit.py` — manual, non-CI tool. Downloads four public CSVs into `data/` when missing (superstore, Palmer penguins, telco churn, daily min temperatures) and exercises the toolkit + MCP path against them and the generated `evaluation/data/` corpora (run `python evaluation/generate_datasets.py` first). 54 checks, each cross-checked against an independent pandas/numpy/scipy computation or the factory `ground_truth.json`; full offline suite at this pass: 360 passed, 1 skipped.
+
+| Claim | Check | Status |
+|---|---|---|
+| All 15 ops correct on real data | group sums, value counts, top-N ordering, Pearson/Spearman, Welch t, chi², ANOVA F, OLS coefficients + R², period buckets, IQR/z-score counts, subset comparisons — all within tolerance of standalone pandas/scipy | **PROVEN** |
+| Generated ground truth matched | `sales.csv` region sums / mean order value / IQR outliers; `support.csv` channel means + counts; `ecommerce.csv` conversion by device + isotonic Brier 0.17746 / ECE 0.0613; `retail_250k` region sums | **PROVEN** |
+| SQL sandbox on real data | `DROP`/`CREATE`/`read_csv_auto(...)` rejected; table-name restriction enforced; `QUALIFY` windows + CTE self-join return reference results | **PROVEN** |
+| DAG chaining | `filter_rows→group_aggregate→top_n`; `sql_query→isotonic_calibration` on a derived frame; non-table producers, self- and forward references rejected | **PROVEN** |
+| Verification gates | grounded/fabricated prose, ×100 `%` escalation, caller-supplied evidence, explicit `run_id` targeting, tampered-execution detection, and the full MCP in-memory flow (load→run→verify→error envelopes) | **PROVEN** |
+| Perf sanity | retail_250k: load 1–15 s (warm/cold disk), filtered `group_aggregate` 0.04–0.12 s | **INDICATIVE** (dev box, not a bench) |
+
+The run found and fixed two real defects: the catalog's double-bracket `filters` shape hint and the `SettingWithCopyWarning` emitted by ops that coerce dtype on filtered frames (see Documentation Discrepancies below). Dataset quirks discovered (not engine bugs): the leonism superstore copy concatenates unrelated sample tables after row 9,994 (the tool slices to the first block); this telco copy stores `SeniorCitizen` as `False/True/0/1` strings and blank `TotalCharges`, which the ops' numeric coercion handles.
 
 **What failed / still unproven (read before quoting anything)**:
 1. The wire-format bug was real and live-only — found, fixed, now pinned by tests in both directions.
@@ -466,6 +483,9 @@ python -m coverage report -m
 
 # Live SSE smoke (start the app first: uvicorn webapp.app:app --port 8899)
 python tools/sse_smoke.py
+
+# Real-data toolkit + MCP smoke (downloads 4 public CSVs into data/; needs evaluation/data/)
+python tools/smoke_toolkit.py
 ```
 
 ### Manual Agentic Smoke Test
@@ -496,3 +516,5 @@ python tools/sse_smoke.py
 * **A wire-format bug no offline fake could see (2026-10-16)**: assistant `tool_calls` were serialised in the internal shape `{id, name, arguments: dict}` instead of OpenAI's `{id, type: "function", function: {name, arguments: <json string>}}`. Every *second* turn of an agentic run was a hard HTTP 400 on every OpenAI-compatible provider (first live smoke, Groq: `'messages.1.tool_calls.0.type' : property 'type' is missing`). The scripted-LLM suite could not catch it because tool turns never crossed the provider HTTP layer. Lesson: fakes that bypass a serialization boundary do not test that boundary — keep one test per provider that goes through `httpx.MockTransport` and asserts the exact wire shape, plus at least one live multi-turn smoke before trusting a tool-calling path.
 * **Model control tokens can arrive inside structured fields (2026-10-17)**: in a pinned live run, NIM's gpt-oss-20b returned tool calls whose `function.name` carried the harmony channel suffix (`group_aggregate<|channel|>commentary`). Dispatch treated each as an unknown op, the loop burned its budget retrying, and the case died as `iteration_cap_reached` — a trained-model quirk no hand-written fake would ever emit. Fixed by stripping from the first `<|` in inbound names (a name that is *nothing but* tokens is dropped). Lesson: wire-format tests must include malformed-but-realistic model emissions, and a retry loop cannot recover from a corruption it re-feeds to itself verbatim.
 * **A missing per-model capability flag silently mutates the payload (2026-10-17)**: the registry's curated entry for NIM `gpt-oss-20b` did not declare `supports_reasoning_effort`, so the orchestrator stripped the configured `reasoning_effort="low"` from every planner call. NIM then ran gpt-oss at its default (verbose) reasoning effort; on plan-heavy questions the model burned the entire 3 000-token `max_tokens` budget in the reasoning channel and returned `finish_reason=length` with empty content — surfacing only as `AllProvidersFailedError: … returned empty content` (13 of the 17 baseline failures in the pinned A/B; reproduced 4/4 with a logging transport wrapped around the real pipeline). Lesson: "unsupported → strip" defaults are safe against *rejection*, but they silently change model behaviour when a flag is under-declared; the empty-content error now names the suspicion (`hit max_tokens=N`) and the diagnosis procedure is a wire-level capture through the real pipeline, not a synthetic prompt.
+* **The auto-generated op catalog drifted from the params models (2026-10-20)**: `operation_catalog()` rendered `filters ({column, op, value}[][])` — the `Filter` hint already ended in `[]` and the `list[...]` annotation branch appended a second one, so every catalog consumer (planner prompt, MCP clients) saw a double bracket. The Pydantic models require a flat `list[Filter]`; an agent following the catalog would submit nested arrays and fail validation (exactly what the real-data smoke hit). Fixed the shape hint + `test_catalog_filter_shape_is_flat`. Lesson: generated docs must be asserted against the thing they describe, not reviewed by eye.
+* **"Returns a copy" is not "safe to mutate" (2026-10-20)**: `apply_filters` returned a boolean-masked frame still carrying pandas' `_is_copy` flag, so `group_aggregate`'s in-place dtype coercion emitted `SettingWithCopyWarning` whenever filters were present — pytest-visible and logged, though the numbers were correct. `apply_filters` now returns an independent copy; pinned by `test_apply_filters_result_is_mutation_safe` + `test_group_aggregate_with_filter_does_not_warn` (which assert the original frame is untouched and no warning is raised). Lesson: boolean indexing gives you fresh data but a stale ownership flag; only `.copy()` clears it.
