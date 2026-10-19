@@ -18,7 +18,7 @@ The LLM is not the analytics engine.
 
 That sounds obvious. It isn't. Most AI analytics tools let the model do the math, wrap the output in confident prose, and hope you don't check. That's how you get dashboards that look right and numbers that aren't.
 
-Insight splits the job in two. The model reads your question, plans the analysis, and explains the result. Everything in between — every average, regression, significance test, and join — runs as deterministic pandas, scipy, and sandboxed DuckDB code. Before an answer reaches you, a second arithmetic path recomputes every headline number and compares. If the narrative and the math disagree, you find out.
+Insight splits the job in two. The model reads your question, plans the analysis, and explains the result. Everything in between — every average, regression, significance test, and join — runs as deterministic pandas, scipy, and sandboxed DuckDB code. Before an answer reaches you, a second arithmetic path recomputes the headline group-by aggregates and cross-checks rankings, counts, and correlations; every number in the narrative is also traced back to computed evidence. If the narrative and the math disagree, you find out.
 
 We think this is the only honest way to build an analytical agent. It's also why we can say something you can rarely say about an LLM product: the numbers are right by construction. You can click **View calculation** and inspect every one of them. You can click **View plan** and audit every step. When a plan fails validation or execution, the orchestrator repairs and retries — once — then tells you exactly what went wrong instead of hallucinating a result.
 
@@ -34,11 +34,11 @@ Everything here was measured on this repo during development. Nothing is aspirat
 | **Agentic vs single-shot A/B** — apparent pre-fix advantage, mostly explained by a provider bug; post-fix near parity | the edge that survives scrutiny is the **auditable tool trail**, not a proven accuracy gain — resolved in full below |
 | **250K rows**: profiled in **2.0s**, heaviest op **<2s**, bivariate OLS in **125ms** | the deterministic engine holds up at real scale, not toy data |
 | **−31.7% Brier score** after isotonic recalibration; over-confidence flagged at **ECE = 0.245** | calibration audits quantify rather than guess |
-| **≤0.13% aggregate drift** under 5% MCAR missingness, gracefully degrading to **0.60% at 35%**, with explicit MCAR caveats | missing-data behavior is honest and surfaced, not hidden |
+| **Explicit MCAR caveats** when referenced columns exceed 5% missingness, with row-exclusion counts and mixed count bases surfaced | missing-data behavior is honest and surfaced, not hidden |
 | Engine answered diamonds' top cut as **Premium ($4,584 avg)** where LLM priors say *Ideal* | computed evidence beats model priors |
-| **8/8 malicious SQL patterns blocked** (`DROP`, `COPY TO`, `ATTACH`, `PRAGMA`, chained statements…) plus a hard **10s interrupt** on runaway queries | read-only relational analytics you can safely hand to an LLM |
+| **Sandboxed read-only SQL** — `DROP`, `COPY TO`, `ATTACH`, `PRAGMA`, chained statements and file reads all blocked; external access disabled and configuration locked; hard **10s interrupt** on runaway queries | read-only relational analytics you can safely hand to an LLM |
 | **16-question real-world battery** (54K-row diamonds plus a messy 4-sheet clinical workbook with case-mismatched join keys), logged in [evaluation/REAL_WORLD_LOG.md](evaluation/REAL_WORLD_LOG.md), every answer cross-checked against independent pandas/scipy ground truth | it survives data the way data actually arrives |
-| **Full offline suite green in CI** with zero API keys, every headline number independently recomputed through a second arithmetic path, every number in the narrative traced back to computed evidence | verified by construction |
+| **Full offline suite green in CI** with zero API keys, group-by aggregates independently recomputed through a second arithmetic path, rankings/counts/correlations cross-checked, every number in the narrative traced back to computed evidence | verified by construction |
 
 ### The agentic benchmark, resolved
 
@@ -68,7 +68,7 @@ Statistical Router ──► Welch t-test / Mann-Whitney U / chi-square + Cramé
     ↓                    / one-way ANOVA + η² — auto-routed by column types
 Result Validator ──► non-finite values, empty results, small samples,
     ↓                 missingness caveats (MCAR assumption) + INDEPENDENT
-    ↓                 RECOMPUTATION of every headline number through a
+    ↓                 RECOMPUTATION of headline aggregates through a
     ↓                 second arithmetic path
 Conversation State ──► active filters/dims/metrics persist across turns;
     ↓                    follow-ups become filter patches, not re-interpretation
@@ -94,7 +94,7 @@ question → [call op → read real computed result] ×n → final answer
 
 - **It observes before it decides.** A failed call (unknown column, bad params) comes back as a readable error, so the model fixes it instead of the whole plan dying on one mistake. It can chain: pass `input_step` to run on an earlier step's output table, or let `filter_rows` narrow the working row-set for later calls.
 - **It is bounded.** `INSIGHT_AGENTIC_MAX_ITERATIONS` and `INSIGHT_AGENTIC_MAX_LLM_CALLS` cap turns and provider calls. Three identical failing calls abort the run. Rate limits surface as a visible "throttled" outcome, never a wrong answer.
-- **The guarantees do not move.** Every tool call is validated into the op's Pydantic params and executed by the same `OperationSpec.run` the executor uses — no free-form code, ever. Afterwards the run is *rebuilt* into an `AnalysisPlan` and `ExecutionResult`, so validation, the independent recomputation of every headline number, chart rendering, the explainer, and the number-grounding guard are the exact same code the single-shot path uses. What changes is how the evidence is gathered, not how it is verified.
+- **The guarantees do not move.** Every tool call is validated into the op's Pydantic params and executed by the same `OperationSpec.run` the executor uses — no free-form code, ever. Afterwards the run is *rebuilt* into an `AnalysisPlan` and `ExecutionResult`, so validation, the independent recomputation of headline aggregates, chart rendering, the explainer, and the number-grounding guard are the exact same code the single-shot path uses. What changes is how the evidence is gathered, not how it is verified.
 - **Chart planning is deterministic in this mode.** The two most recent table-producing steps are rendered with the same editorial rules, and any bad chart spec is rejected by the ordinary validator rather than trusted.
 - **Provider-agnostic.** OpenAI-shaped tools on every OpenAI-compatible endpoint; Anthropic-shaped tools when the chain's primary provider is Anthropic.
 - **`INSIGHT_PLAN_APPROVAL=on` (or `plan_only`) takes precedence.** That gate needs a reviewable plan before anything executes, so those requests use the single-shot planner.
@@ -130,7 +130,7 @@ This is the only built-in access gate. See the [deployment note](#configuration)
 - **Zero-prompt briefing** — the moment a CSV lands, deterministic detectors surface the three most important findings (trend breaks, outliers, strong correlations, class imbalance, data quality), each with an *Investigate* button.
 - **Next-best-action suggestions** — `insight/agentic.py` derives follow-up questions from the profile, what you've already analyzed, and columns shared across tables. Zero LLM cost, zero latency; the UI renders them as one-click chips.
 - **Agentic tool-use mode (opt-in)** — the model calls analysis ops as tools one at a time, reads each real computed result, and decides what to do next. Bounded, throttle-aware, identical-failure abort, DAG-chained via `input_step` — and it runs on the *same* guarantees: every call routes through the deterministic op registry and column validator, and the answer is rebuilt into a plan so validation, recomputation, charts, explainer, and grounding still apply. The tool trail streams live into the UI.
-- **Verified answers** — a validator checks sanity and small-sample caveats; an independent recomputation layer re-derives aggregates through a second code path and flags any mismatch before you see the answer.
+- **Verified answers** — a validator checks sanity and small-sample caveats; an independent recomputation layer re-derives group-by aggregates through a second code path and cross-checks rankings, counts, and correlations before you see the answer.
 - **Statistical tests without statistics mistakes** — binary-vs-numeric questions route to Welch's t-test or Mann–Whitney U with Cohen's d and plain-language group differences ("Class 1 averages 32% lower"); categorical pairs get chi-square with Cramér's V; 3+ groups vs numeric route to one-way ANOVA with η². Point-biserial correlation traps are actively blocked.
 - **Regression & calibration** — OLS via `np.linalg.lstsq` with t-stat p-values, R² and standardized betas; `isotonic_calibration` audits whether a score truly tracks a binary outcome (PAV fit, reliability table, Brier before/after recalibration, ECE).
 - **Honest missing-data handling** — every op coerces and drops explicitly; listwise deletions are reported (`rows_excluded_incomplete`, mixed count bases flagged), and referenced columns >5% missing raise an explicit MCAR-assumption caveat in the answer.
@@ -440,7 +440,7 @@ Every statistical claim above is a textbook method executed by deterministic cod
 
 **Probability calibration** — `isotonic_calibration` implements the pool-adjacent-violators algorithm (Ayer et al., 1955; Robertson, Wright & Dykstra, *Order Restricted Statistical Inference*, 1988), scored by the Brier score (Brier, 1950) and expected calibration error in the style of Guo et al. (2017), following the score-to-probability calibration literature (Zadrozny & Elkan, 2002; Niculescu-Mizil & Caruana, 2005).
 
-**LLM reliability patterns** — the planner-emits-plan / engine-computes split follows program-aided language models (Gao et al., *PAL*, ICML 2023); bounded plan-repair mirrors iterative self-refinement (Madaan et al., *Self-Refine*, NeurIPS 2023); independent recomputation of every headline number is an application of chain-of-verification ideas (Dhuliawala et al., 2023).
+**LLM reliability patterns** — the planner-emits-plan / engine-computes split follows program-aided language models (Gao et al., *PAL*, ICML 2023); bounded plan-repair mirrors iterative self-refinement (Madaan et al., *Self-Refine*, NeurIPS 2023); independent recomputation of headline aggregates is an application of chain-of-verification ideas (Dhuliawala et al., 2023).
 
 ## Security & privacy
 
