@@ -82,28 +82,86 @@ class DuckSession:
         self.close()
 
     @staticmethod
-    def _strip_comments(sql: str) -> str:
-        sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
-        sql = re.sub(r"--[^\n]*", " ", sql)
-        return sql.strip()
+    def _mask_sql(sql: str) -> tuple[str, str]:
+        """Return two same-length masked copies of `sql`.
+
+        `masked` has every character inside a single-quoted string,
+        dollar-quoted string, double-quoted identifier, line comment or block
+        comment replaced by a space — statement splitting and keyword scans
+        then never see text that is not SQL. `executable` blanks only the
+        comment spans, preserving literals, because inline comments would
+        otherwise swallow the wrapper query's closing parenthesis.
+        """
+        masked = list(sql)
+        executable = list(sql)
+        n = len(sql)
+        i = 0
+        while i < n:
+            ch = sql[i]
+            nxt = sql[i + 1] if i + 1 < n else ""
+            end: Optional[int] = None
+            comment = False
+            if ch in ("'", '"'):
+                j = i + 1
+                while j < n:
+                    if sql[j] == ch:
+                        if j + 1 < n and sql[j + 1] == ch:
+                            j += 2
+                            continue
+                        break
+                    j += 1
+                end = min(j + 1, n)
+            elif ch == "-" and nxt == "-":
+                newline = sql.find("\n", i + 2)
+                end = n if newline == -1 else newline
+                comment = True
+            elif ch == "/" and nxt == "*":
+                close = sql.find("*/", i + 2)
+                end = n if close == -1 else close + 2
+                comment = True
+            elif ch == "$":
+                tag_match = re.match(r"\$[A-Za-z_0-9]*\$", sql[i:])
+                if tag_match:
+                    tag = tag_match.group(0)
+                    close = sql.find(tag, i + len(tag))
+                    end = n if close == -1 else close + len(tag)
+            if end is None:
+                i += 1
+                continue
+            for k in range(i, end):
+                masked[k] = " "
+                if comment:
+                    executable[k] = " "
+            i = end
+        return "".join(masked), "".join(executable)
 
     def validate_statement(self, query: str) -> str:
-        sql = self._strip_comments(query)
-        parts = [p.strip() for p in sql.split(";") if p.strip()]
-        if len(parts) != 1:
+        original = query.strip()
+        masked, executable = self._mask_sql(original)
+        spans: list[tuple[int, int]] = []
+        start = 0
+        for idx, char in enumerate(masked):
+            if char == ";":
+                spans.append((start, idx))
+                start = idx + 1
+        spans.append((start, len(masked)))
+        non_empty = [(s, e) for s, e in spans if original[s:e].strip()]
+        if len(non_empty) != 1:
             raise ValueError(
                 "exactly one SQL statement is allowed (no chained statements)"
             )
-        statement = parts[0]
-        head = statement.split(None, 1)[0].upper() if statement.split() else ""
+        lo, hi = non_empty[0]
+        statement = executable[lo:hi].strip()
+        masked_statement = masked[lo:hi].strip()
+        head = masked_statement.split(None, 1)[0].upper() if masked_statement.split() else ""
         if head not in _ALLOWED_LEADING:
             raise ValueError(
                 f"only SELECT/WITH queries are allowed (got '{head or 'empty'}')"
             )
         for keyword in _BLOCKED_KEYWORDS:
-            if re.search(rf"\b{keyword}\b", statement, flags=re.I):
+            if re.search(rf"\b{keyword}\b", masked_statement, flags=re.I):
                 raise ValueError(f"'{keyword}' statements are not permitted")
-        return statement.rstrip(";").strip()
+        return statement
 
     def execute(self, query: str) -> pd.DataFrame:
         statement = self.validate_statement(query)

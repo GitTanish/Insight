@@ -55,14 +55,13 @@ def _verify_group_aggregate(df, step, table) -> list[ValidationIssue]:
     )
     for metric in params.get("metrics", []):
         agg = metric.get("agg", "count")
-        alias = metric.get("alias") or f"{agg}_{metric.get('column')}" if metric.get("column") else None
-        alias = alias or "row_count"
+        col = metric.get("column")
+        alias = metric.get("alias") or (f"{agg}_{col}" if col else "row_count")
         if alias not in table.columns:
             continue
         if agg == "count":
             expected = work.groupby(group_by, observed=True).size()
         else:
-            col = metric.get("column")
             if col not in df.columns:
                 continue
             expected = (

@@ -63,10 +63,25 @@ def test_describe_lists_exact_tables_and_columns(duck):
     "SET enable_external_access=true",
     "PRAGMA database_list",
     "-- SELECT ok\nDROP TABLE orders",
+    "SELECT ';' AS x; DROP TABLE orders",
 ])
 def test_destructive_and_config_statements_blocked(duck, bad_sql):
     with pytest.raises(ValueError):
         duck.execute(bad_sql)
+
+
+@pytest.mark.parametrize("query, expected", [
+    ("SELECT 'DROP' AS a, 'x;y' AS b, '-- not a comment' AS c",
+     ["DROP", "x;y", "-- not a comment"]),
+    ("SELECT '/* still a string */' AS note", ["/* still a string */"]),
+    ("SELECT $$UPDATE orders$$ AS note", ["UPDATE orders"]),
+    ("SELECT $tag$DELETE$tag$ AS note", ["DELETE"]),
+    ("SELECT 1 AS \"DROP\"", [1]),
+    ("SELECT 'it''s fine' AS s -- trailing comment", ["it's fine"]),
+])
+def test_literals_and_identifiers_are_not_mistaken_for_sql(duck, query, expected):
+    frame = duck.execute(query)
+    assert frame.iloc[0].tolist() == expected
 
 
 def test_external_access_disabled_blocks_file_reads(duck):

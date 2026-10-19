@@ -68,6 +68,29 @@ def test_tampered_value_counts_top_is_caught(sales_df):
     assert any("most frequent" in i.message for i in issues)
 
 
+def test_count_metric_with_alias_is_verified(sales_df):
+    plan = AnalysisPlan(
+        objective="t",
+        steps=[PlanStep(step_id=0, operation="group_aggregate", params={
+            "group_by": "region",
+            "metrics": [{"agg": "count", "alias": "n"}],
+        })],
+        charts=[],
+    )
+    execution = execute_plan_sync(sales_df, plan)
+    issues = independently_verify(sales_df, plan, execution)
+    assert issues == [], [i.message for i in issues]
+
+    table = execution.tables_by_step()[0]
+    assert "n" in table.columns
+    table.rows[0][table.columns.index("n")] += 7
+    issues = independently_verify(sales_df, plan, execution)
+    assert any(
+        "recomputation mismatch (n)" in i.message
+        for i in issues
+    ), [i.message for i in issues]
+
+
 def test_correlation_asymmetry_detected():
     from insight.domain.execution import DataTable
 
