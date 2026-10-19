@@ -32,6 +32,27 @@ def test_nan_in_output_is_error(sales_df):
     assert any("non-finite" in e.message for e in validation.errors)
 
 
+def test_non_finite_beyond_row_200_is_reported(sales_df):
+    plan = _plan([{"column": "region"}])
+    execution = _run(plan, sales_df)
+    table = execution.tables_by_step()[0]
+    table.rows = [["r", 1.0] for _ in range(250)]
+    table.rows[240] = ["bad", float("nan")]
+    validation = validate_execution(plan, execution)
+    assert not validation.valid
+    assert any("at [240]" in e.message for e in validation.errors)
+
+
+def test_multiple_non_finite_values_all_reported(sales_df):
+    plan = _plan([{"column": "region"}])
+    execution = _run(plan, sales_df)
+    table = execution.tables_by_step()[0]
+    table.rows = [["a", float("inf")], ["b", float("nan")]]
+    validation = validate_execution(plan, execution)
+    non_finite = [e.message for e in validation.errors if "non-finite" in e.message]
+    assert len(non_finite) == 2
+
+
 def test_empty_filtered_table_warns_not_errors(sales_df):
     plan = AnalysisPlan(
         objective="t",

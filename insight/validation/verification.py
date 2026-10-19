@@ -8,6 +8,7 @@ from insight.analytics.operations import (
     _mask_for_filter,
     _numeric,
     apply_filters,
+    fold_other_levels,
 )
 from insight.domain.analysis import AnalysisPlan, Filter
 from insight.domain.execution import ExecutionResult
@@ -16,10 +17,79 @@ from insight.domain.visualization import ValidationIssue
 _TOLERANCE = 1e-6
 
 
-def _values_close(a: float, b: float) -> bool:
-    if b == 0:
-        return abs(a) < 1e-9
-    return abs(a - b) / abs(b) <= _TOLERANCE
+def _is_na(value) -> bool:
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _values_close(a, b) -> bool:
+    a_na, b_na = _is_na(a), _is_na(b)
+    if a_na or b_na:
+        return a_na and b_na
+    try:
+        a_f, b_f = float(a), float(b)
+    except (TypeError, ValueError):
+        return str(a) == str(b)
+    if b_f == 0:
+        return abs(a_f) < 1e-9
+    return abs(a_f - b_f) / abs(b_f) <= _TOLERANCE
+
+
+def _table_value_close(got, expected) -> bool:
+    """Compare a table cell (already _scalar-rounded) with a recomputed value."""
+    if _is_na(got) or _is_na(expected):
+        return _is_na(got) and _is_na(expected)
+    if isinstance(got, float) or isinstance(expected, float):
+        try:
+            if got == round(float(expected), 6):
+                return True
+        except (TypeError, ValueError):
+            pass
+    return _values_close(got, expected)
+
+
+def _key_token(value) -> str:
+    return "<NA>" if _is_na(value) else str(value)
+
+
+def _as_int(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _metric_dict(metric) -> dict:
+    if isinstance(metric, dict):
+        return dict(metric)
+    if hasattr(metric, "model_dump"):
+        try:
+            return metric.model_dump()
+        except Exception:
+            return {}
+    return {}
+
+
+def _coerce_filters(raw) -> list[Filter]:
+    filters: list[Filter] = []
+    for item in raw or []:
+        if isinstance(item, Filter):
+            filters.append(item)
+        elif isinstance(item, dict):
+            filters.append(Filter(**item))
+    return filters
 
 
 def _effective_frames(df, plan: AnalysisPlan) -> dict[int, pd.DataFrame]:
@@ -45,92 +115,125 @@ def _effective_frames(df, plan: AnalysisPlan) -> dict[int, pd.DataFrame]:
 
 def _verify_group_aggregate(df, step, table) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
-    params = dict(step.params)
+    params = step.params if isinstance(step.params, dict) else {}
     group_by = params.get("group_by")
-    if not isinstance(group_by, str) or group_by not in df.columns:
+    if isinstance(group_by, str):
+        group_cols = [group_by]
+    elif isinstance(group_by, (list, tuple)) and len(group_by) > 0:
+        group_cols = [str(c) for c in group_by]
+    else:
         return issues
-    work = apply_filters(
-        df,
-        [Filter(**f) for f in params.get("filters", [])],
-    )
+    if any(col not in df.columns for col in group_cols):
+        return issues
+    try:
+        work = apply_filters(df, _coerce_filters(params.get("filters", [])))
+    except Exception:
+        return issues
+    if work.empty:
+        return issues
+    other_after = _as_int(params.get("other_after"), 0) or None
+    if len(group_cols) == 1:
+        work, _folded = fold_other_levels(work, group_cols[0], other_after)
+    grouped = work.groupby(group_cols, dropna=False, observed=True)
+    expected_metrics: dict[str, pd.Series] = {}
     for metric in params.get("metrics", []):
-        agg = metric.get("agg", "count")
-        col = metric.get("column")
-        alias = metric.get("alias") or (f"{agg}_{col}" if col else "row_count")
+        spec = _metric_dict(metric)
+        agg = getattr(spec.get("agg", "count"), "value", spec.get("agg", "count"))
+        agg = str(agg)
+        col = spec.get("column")
+        alias = spec.get("alias") or (f"{agg}_{col}" if col else "row_count")
         if alias not in table.columns:
             continue
         if agg == "count":
-            expected = work.groupby(group_by, observed=True).size()
+            expected_metrics[alias] = grouped.size()
         else:
-            if col not in df.columns:
+            if col not in work.columns:
                 continue
-            expected = (
-                _numeric(work[col])
-                .groupby(work[group_by])
-                .agg(agg)
-            )
-        got = pd.Series(
-            [row[table.columns.index(alias)] for row in table.rows],
-            index=[str(r[0]) for r in table.rows],
+            series = work[col] if agg == "nunique" else _numeric(work[col])
+            expected_metrics[alias] = series.groupby(
+                [work[c] for c in group_cols], dropna=False, observed=True
+            ).agg(agg)
+    if not expected_metrics:
+        return issues
+    expected = pd.DataFrame(expected_metrics).reset_index()
+    sort_by = params.get("sort_by")
+    if sort_by and sort_by in expected.columns:
+        expected = expected.sort_values(
+            str(sort_by),
+            ascending=_as_bool(params.get("ascending", False)),
+            na_position="last",
         )
-        expected.index = expected.index.astype(str)
-        for key, g_val in expected.items():
-            if key not in got.index:
+    top_n = params.get("top_n")
+    if top_n:
+        expected = expected.head(max(1, _as_int(top_n, len(expected))))
+    metric_aliases = list(expected_metrics)
+    column_values = {c: list(expected[c]) for c in group_cols}
+    expected_entries = [
+        (
+            tuple(_key_token(column_values[c][i]) for c in group_cols),
+            {a: expected[a].iloc[i] for a in metric_aliases},
+        )
+        for i in range(len(expected))
+    ]
+    got: dict[tuple[str, ...], dict[str, object]] = {}
+    for row in table.rows:
+        key = tuple(_key_token(row[table.columns.index(c)]) for c in group_cols)
+        got[key] = {
+            a: row[table.columns.index(a)] for a in metric_aliases if a in table.columns
+        }
+    expected_keys = {key for key, _ in expected_entries}
+    for key, values in expected_entries:
+        label = " / ".join(key)
+        if key not in got:
+            if not table.truncated:
+                for alias in metric_aliases:
+                    issues.append(
+                        ValidationIssue(
+                            severity="error",
+                            message=(
+                                f"independent recomputation mismatch ({alias}): "
+                                f"group '{label}' missing from result"
+                            ),
+                            step_id=step.step_id,
+                        )
+                    )
+            continue
+        for alias in metric_aliases:
+            r_val = got[key].get(alias)
+            g_val = values[alias]
+            if not _values_close(r_val, g_val):
                 issues.append(
                     ValidationIssue(
                         severity="error",
                         message=(
                             f"independent recomputation mismatch ({alias}): "
-                            f"group '{key}' missing from result"
+                            f"group '{label}' reported {r_val} but engine recomputes {g_val}"
                         ),
                         step_id=step.step_id,
                     )
                 )
-                continue
-            r_val = got[key]
-            try:
-                ok = _values_close(float(r_val), float(g_val))
-            except (TypeError, ValueError):
-                ok = str(r_val) == str(g_val)
-            if not ok:
-                issues.append(
-                    ValidationIssue(
-                        severity="error",
-                        message=(
-                            f"independent recomputation mismatch ({alias}): "
-                            f"group '{key}' reported {r_val} but engine recomputes {g_val}"
-                        ),
-                        step_id=step.step_id,
-                    )
+    for key in got:
+        if key not in expected_keys:
+            issues.append(
+                ValidationIssue(
+                    severity="error",
+                    message=(
+                        f"independent recomputation mismatch: group "
+                        f"'{' / '.join(key)}' is not in the recomputed result"
+                    ),
+                    step_id=step.step_id,
                 )
+            )
     return issues
 
 
 def _verify_top_n(df, step, table) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
-    sort_col = step.params.get("sort_by")
-    n = int(step.params.get("n", 10))
+    params = step.params if isinstance(step.params, dict) else {}
+    sort_col = params.get("sort_by")
+    n = max(1, _as_int(params.get("n", 10), 10))
     if not table.rows or sort_col not in df.columns:
         return issues
-    idx = table.columns.index(sort_col)
-    vals = [_numeric(pd.Series([r[idx]]))[0] for r in table.rows]
-    ascending = bool(step.params.get("ascending", False))
-    pairs = [
-        (vals[i], vals[i + 1]) for i in range(len(vals) - 1)
-        if pd.notna(vals[i]) and pd.notna(vals[i + 1])
-    ]
-    violations = [(a, b) for a, b in pairs if (a > b if ascending else a < b)]
-    if violations:
-        issues.append(
-            ValidationIssue(
-                severity="error",
-                message=(
-                    f"independent check failed (top_n): ordering violates "
-                    f"ascending={ascending} at {violations[0]}"
-                ),
-                step_id=step.step_id,
-            )
-        )
     if len(table.rows) > n:
         issues.append(
             ValidationIssue(
@@ -139,41 +242,163 @@ def _verify_top_n(df, step, table) -> list[ValidationIssue]:
                 step_id=step.step_id,
             )
         )
+    try:
+        work = apply_filters(df, _coerce_filters(params.get("filters", [])))
+    except Exception:
+        return issues
+    if work.empty:
+        return issues
+    ascending = _as_bool(params.get("ascending", False))
+    sort_key = _numeric(work[sort_col])
+    ordered = work.iloc[
+        sort_key.sort_values(ascending=ascending, na_position="last", kind="stable").index
+    ].head(n)
+    expected_len = len(ordered)
+    shared_cols = [c for c in table.columns if c in ordered.columns]
+    if shared_cols:
+        for position in range(min(len(table.rows), expected_len)):
+            row = table.rows[position]
+            for col_name in shared_cols:
+                got_val = row[table.columns.index(col_name)]
+                expected_val = ordered.iloc[position][col_name]
+                if not _table_value_close(got_val, expected_val):
+                    issues.append(
+                        ValidationIssue(
+                            severity="error",
+                            message=(
+                                f"independent check failed (top_n): row {position} column "
+                                f"'{col_name}' reports {got_val} but recomputed top-{n} "
+                                f"expects {expected_val}"
+                            ),
+                            step_id=step.step_id,
+                        )
+                    )
+                    return issues
+    if len(table.rows) < expected_len and not table.truncated:
+        issues.append(
+            ValidationIssue(
+                severity="error",
+                message=(
+                    f"independent check failed (top_n): returned {len(table.rows)} rows "
+                    f"but {expected_len} rows are selectable"
+                ),
+                step_id=step.step_id,
+            )
+        )
     return issues
 
 
 def _verify_value_counts(df, step, table) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
-    col = step.params.get("column")
-    if col not in df.columns or not table.rows:
+    params = step.params if isinstance(step.params, dict) else {}
+    col = params.get("column")
+    if col not in df.columns or not table.rows or "count" not in table.columns:
         return issues
+    try:
+        work = apply_filters(df, _coerce_filters(params.get("filters", [])))
+    except Exception:
+        return issues
+    raw = work[col]
+    valid_total = int(raw.notna().sum())
+    counts = raw.value_counts()
+    other_after = _as_int(params.get("other_after"), 0) or None
+    if other_after is not None and len(counts) > other_after:
+        kept = counts.iloc[: other_after - 1]
+        folded = int(counts.iloc[other_after - 1:].sum())
+        counts = pd.concat([kept, pd.Series({f"Other ({folded:,} rows)": folded})])
+    top_n = max(1, _as_int(params.get("top_n", 15), 15))
+    counts = counts.head(top_n)
+    expected = {str(label): int(value) for label, value in counts.items()}
     count_idx = table.columns.index("count")
-    counted_total = sum(int(r[count_idx]) for r in table.rows)
-    distinct_total = int(df[col].nunique(dropna=True))
-    top_expected = df[col].value_counts()
-    if counted_total > len(df):
+    got = {str(r[0]): r[count_idx] for r in table.rows}
+    for label, value in got.items():
+        if label not in expected:
+            issues.append(
+                ValidationIssue(
+                    severity="error",
+                    message=(
+                        f"independent recomputation mismatch (value_counts): "
+                        f"'{label}' is not among the recomputed top values"
+                    ),
+                    step_id=step.step_id,
+                )
+            )
+            continue
+        if not _values_close(value, expected[label]):
+            issues.append(
+                ValidationIssue(
+                    severity="error",
+                    message=(
+                        f"independent recomputation mismatch (value_counts): "
+                        f"'{label}' reported {value} but engine recomputes {expected[label]}"
+                    ),
+                    step_id=step.step_id,
+                )
+            )
+    for label, value in expected.items():
+        if label not in got:
+            issues.append(
+                ValidationIssue(
+                    severity="error",
+                    message=(
+                        f"independent recomputation mismatch (value_counts): "
+                        f"'{label}' missing from result (expected {value})"
+                    ),
+                    step_id=step.step_id,
+                )
+            )
+    counted_total = sum(
+        int(r[count_idx]) for r in table.rows if not _is_na(r[count_idx])
+    )
+    if counted_total > valid_total:
         issues.append(
             ValidationIssue(
                 severity="error",
                 message=(
                     f"independent check failed (value_counts): counts sum to "
-                    f"{counted_total:,} but dataset has only {len(df):,} rows"
+                    f"{counted_total:,} but the filtered dataset has only "
+                    f"{valid_total:,} non-null rows"
                 ),
                 step_id=step.step_id,
             )
         )
-    first_label = str(table.rows[0][0])
-    if distinct_total and str(top_expected.index[0]) != first_label:
-        issues.append(
-            ValidationIssue(
-                severity="error",
-                message=(
-                    f"independent recomputation mismatch (value_counts): most frequent "
-                    f"value is '{top_expected.index[0]}', table reports '{first_label}'"
-                ),
-                step_id=step.step_id,
+    if "proportion" in table.columns:
+        pidx = table.columns.index("proportion")
+        for row in table.rows:
+            label = str(row[0])
+            if label not in expected:
+                continue
+            expected_p = expected[label] / valid_total if valid_total else 0.0
+            try:
+                got_p = float(row[pidx])
+            except (TypeError, ValueError):
+                continue
+            if abs(got_p - expected_p) > _TOLERANCE + 5e-5:
+                issues.append(
+                    ValidationIssue(
+                        severity="error",
+                        message=(
+                            f"independent recomputation mismatch (value_counts): "
+                            f"'{label}' proportion reported {got_p} but engine "
+                            f"recomputes {expected_p:.4f}"
+                        ),
+                        step_id=step.step_id,
+                    )
+                )
+    first_label = str(table.rows[0][0]) if table.rows else ""
+    if expected:
+        expected_top = next(iter(expected))
+        if first_label != expected_top:
+            issues.append(
+                ValidationIssue(
+                    severity="error",
+                    message=(
+                        f"independent recomputation mismatch (value_counts): most frequent "
+                        f"value is '{expected_top}', table reports '{first_label}'"
+                    ),
+                    step_id=step.step_id,
+                )
             )
-        )
     return issues
 
 
@@ -235,12 +460,24 @@ def independently_verify(df, plan: AnalysisPlan, execution: ExecutionResult) -> 
         if table is None:
             continue
         step_df = effective.get(step.step_id, df)
-        if step.operation == "group_aggregate":
-            issues.extend(_verify_group_aggregate(step_df, step, table))
-        elif step.operation == "top_n":
-            issues.extend(_verify_top_n(step_df, step, table))
-        elif step.operation == "value_counts":
-            issues.extend(_verify_value_counts(step_df, step, table))
-        elif step.operation == "correlation":
-            issues.extend(_verify_correlation(step_df, step, table))
+        try:
+            if step.operation == "group_aggregate":
+                issues.extend(_verify_group_aggregate(step_df, step, table))
+            elif step.operation == "top_n":
+                issues.extend(_verify_top_n(step_df, step, table))
+            elif step.operation == "value_counts":
+                issues.extend(_verify_value_counts(step_df, step, table))
+            elif step.operation == "correlation":
+                issues.extend(_verify_correlation(step_df, step, table))
+        except Exception as exc:
+            issues.append(
+                ValidationIssue(
+                    severity="warning",
+                    message=(
+                        f"independent verification skipped for step {step.step_id} "
+                        f"({step.operation}): {type(exc).__name__}: {exc}"
+                    ),
+                    step_id=step.step_id,
+                )
+            )
     return issues

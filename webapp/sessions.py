@@ -6,6 +6,8 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Optional
 
+import pandas as pd
+
 from insight.domain.dataset import DatasetProfile
 from insight.domain.visualization import AnalysisResponse
 
@@ -15,7 +17,9 @@ class WebSession:
     sid: str
     data_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     uploaded_name: Optional[str] = None
+    primary_table: Optional[str] = None
     content: Optional[bytes] = None
+    frames: dict[str, pd.DataFrame] = field(default_factory=dict)
     profile: Optional[DatasetProfile] = None
     findings: Optional[list[dict]] = None
     model_id: Optional[str] = None
@@ -30,7 +34,9 @@ class WebSession:
     def reset_data(self) -> None:
         self.data_id = uuid.uuid4().hex[:12]
         self.uploaded_name = None
+        self.primary_table = None
         self.content = None
+        self.frames = {}
         self.profile = None
         self.findings = None
         self.findings_status = "ready"
@@ -40,7 +46,7 @@ class WebSession:
 
     @property
     def has_dataset(self) -> bool:
-        return self.content is not None
+        return self.content is not None or bool(self.frames)
 
 
 class SessionStore:

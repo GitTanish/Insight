@@ -104,6 +104,23 @@ def test_validate_rejects_forward_and_self_references(sales_df):
     assert any("unknown step" in i and "input_step" in i for i in issues)
 
 
+def test_validate_accepts_chaining_from_filter_rows(sales_df):
+    profile = profile_dataframe(sales_df, "s.csv")
+    plan = AnalysisPlan(
+        objective="filter chain",
+        steps=[
+            PlanStep(step_id=0, operation="filter_rows", params={
+                "column": "year", "op": "eq", "value": 2025,
+            }),
+            PlanStep(step_id=1, operation="group_aggregate", params={
+                "group_by": "region", "metrics": [{"agg": "count"}],
+            }, input_step=0),
+        ],
+    )
+    _, issues = validate_plan_columns(plan, profile)
+    assert not any("produces no table" in issue for issue in issues), issues
+
+
 def test_explicit_input_beats_implicit_working(sales_df):
     """Implicit chain: filter narrows working; explicit input_step bypasses it."""
     plan = AnalysisPlan(

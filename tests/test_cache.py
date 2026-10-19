@@ -48,6 +48,28 @@ def test_cache_round_trip_serves_second_call_without_llm(
         assert str(tmp_path / "b") in plot.path
 
 
+def test_non_streaming_path_stores_cache_once_on_miss(
+    stub_chain_factory, sales_df, profile, tmp_path, monkeypatch
+):
+    _enable_cache(monkeypatch, tmp_path)
+    calls = {"n": 0}
+    original = result_cache.store_cached_response
+
+    def counting(key, response):
+        calls["n"] += 1
+        return original(key, response)
+
+    monkeypatch.setattr(result_cache, "store_cached_response", counting)
+    stub_chain_factory([VALID_PLAN, EXPLANATION])
+    response = run_analysis_sync(
+        sales_df, profile,
+        AnalysisRequest(question="Which region has the highest revenue?"),
+        artifacts_dir=tmp_path / "a",
+    )
+    assert response.error is None
+    assert calls["n"] == 1, "non-streaming path must not write the cache twice"
+
+
 def test_use_cache_false_bypasses_cache(
     stub_chain_factory, sales_df, profile, tmp_path, monkeypatch
 ):

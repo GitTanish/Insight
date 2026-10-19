@@ -52,6 +52,17 @@ def test_describe_lists_exact_tables_and_columns(duck):
     assert "- orders (4 rows):" in text
 
 
+def test_sandbox_disables_and_locks_external_access(duck):
+    external = duck.con.execute(
+        "SELECT current_setting('enable_external_access')"
+    ).fetchone()[0]
+    locked = duck.con.execute(
+        "SELECT current_setting('lock_configuration')"
+    ).fetchone()[0]
+    assert bool(external) is False
+    assert bool(locked) is True
+
+
 @pytest.mark.parametrize("bad_sql", [
     "SELECT 1; DROP TABLE orders",
     "INSERT INTO orders VALUES (9,'c1',1.0)",

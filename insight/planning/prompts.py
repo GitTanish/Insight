@@ -76,8 +76,8 @@ Hard rules:
         statistical_test(column_a="region", column_b="mean_margin", input_step=<group id>)
     Only chain from operations that produce tables (group_aggregate, value_counts,
     top_n, trend, distribution, summarize, correlation, detect_outliers,
-    compare_subsets, anova_test, regression). filter_rows both narrows the default
-    row-set AND emits a chainable frame.
+    compare_subsets, anova_test, regression, isotonic_calibration, sql_query).
+    filter_rows both narrows the default row-set AND emits a chainable frame.
 12. To model how a numeric outcome depends on one or more numeric drivers, use
     regression (target_column + feature_columns); it reports coefficients,
     p-values and R-squared. Do not use it for categorical targets.

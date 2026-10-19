@@ -194,6 +194,55 @@ def test_query_without_dataset_rejected(client):
     assert r.status_code == 400
 
 
+def test_query_reuses_cached_frames(client, monkeypatch):
+    r = client.post(
+        "/upload",
+        files={"file": ("sales.csv", io.BytesIO(CSV_BYTES), "text/csv")},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+
+    from webapp import services as svc
+
+    calls = {"n": 0}
+    original = svc.parse_csv_content
+
+    def counting(content):
+        calls["n"] += 1
+        return original(content)
+
+    monkeypatch.setattr(svc, "parse_csv_content", counting)
+
+    q = client.post("/query", data={"question": "Which region has the highest revenue?"})
+    assert q.status_code == 200
+    assert "result" in [e for e, _ in parse_sse(q.text)]
+    assert calls["n"] == 0, "query should reuse the frames parsed at upload"
+
+    a = client.post("/api/query", json={"question": "Which region has the highest revenue?"})
+    assert a.status_code == 200
+    assert calls["n"] == 0, "api query should reuse the frames parsed at upload"
+
+
+def test_legacy_session_without_frames_still_parses(client):
+    r = client.post(
+        "/upload",
+        files={"file": ("sales.csv", io.BytesIO(CSV_BYTES), "text/csv")},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+
+    from webapp import app as app_module
+
+    sid = client.cookies.get("insight_sid")
+    session = app_module.STORE.get(sid)
+    session.frames = {}
+    session.primary_table = None
+
+    q = client.post("/query", data={"question": "Which region has the highest revenue?"})
+    assert q.status_code == 200
+    assert "result" in [e for e, _ in parse_sse(q.text)]
+
+
 def test_docx_button_always_visible_and_friendly_redirect(client):
     page = client.get("/")
     assert "Export DOCX" in page.text
@@ -228,3 +277,28 @@ def test_streaming_ui_contract_present(client):
         encoding="utf-8"
     )
     assert ".stage-rail" in css and ".btn.stop" in css
+
+
+def test_parse_csv_detects_semicolon_delimiter():
+    from webapp.services import parse_csv_content
+
+    df, err = parse_csv_content(b"region;revenue\nwest;140\neast;60\n")
+    assert err is None
+    assert list(df.columns) == ["region", "revenue"]
+    assert len(df) == 2
+
+
+def test_parse_csv_detects_tab_delimiter():
+    from webapp.services import parse_csv_content
+
+    df, err = parse_csv_content(b"region\trevenue\nwest\t140\n")
+    assert err is None
+    assert list(df.columns) == ["region", "revenue"]
+
+
+def test_parse_csv_keeps_comma_delimiter():
+    from webapp.services import parse_csv_content
+
+    df, err = parse_csv_content(b"region,revenue\nwest,140\n")
+    assert err is None
+    assert list(df.columns) == ["region", "revenue"]

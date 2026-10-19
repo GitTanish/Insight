@@ -114,3 +114,24 @@ def test_grounding_accepts_verbatim_percentages_and_years():
 def test_grounding_accepts_comma_variants():
     table = _Table(["region", "total"], [["W", 13221]])
     assert find_ungrounded_numbers("Total was 13,221.", [], [table]) == []
+
+
+def test_grounding_flags_invented_small_counts():
+    calcs = [_Calc("groups", 4)]
+    assert find_ungrounded_numbers("There were 7 regions.", calcs, []) == ["7"]
+
+
+def test_grounding_requires_percent_sign_for_scaling():
+    calcs = [_Calc("mean", 2.5)]
+    assert find_ungrounded_numbers("The value is about 250.", calcs, []) == ["250"]
+    assert find_ungrounded_numbers("The value is about 250%.", calcs, []) == []
+
+
+def test_grounding_does_not_accept_substrings_of_larger_evidence():
+    calcs = [_Calc("total", 1234567)]
+    assert find_ungrounded_numbers("There were 234 records.", calcs, []) == ["234"]
+
+
+def test_grounding_accepts_dates_and_ordinals():
+    answer = "On 12/31/2024 we ranked rank 1, step 2, top 3, and 1st place."
+    assert find_ungrounded_numbers(answer, [], []) == []

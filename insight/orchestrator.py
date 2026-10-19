@@ -385,13 +385,14 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
             find_ungrounded_numbers,
         )
 
+        grounding_notes = "; ".join(
+            filter(None, [getattr(s.output, "notes", None) for s in execution.steps if s.success])
+        )
         unverified_figures = find_ungrounded_numbers(
             answer,
             execution.all_calculations(),
             list(execution.tables_by_step().values()),
-            notes="; ".join(
-                filter(None, [getattr(s.output, "notes", None) for s in execution.steps if s.success])
-            ),
+            notes=grounding_notes,
             warnings=validation.warning_messages() + chart_warnings,
         )
         if unverified_figures:
@@ -440,6 +441,7 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
                     retried_answer,
                     execution.all_calculations(),
                     list(execution.tables_by_step().values()),
+                    notes=grounding_notes,
                     warnings=validation.warning_messages() + chart_warnings,
                 )
                 answer = retried_answer
@@ -1125,7 +1127,11 @@ async def analyze(
         and response.validation
         and response.validation.valid
     ):
-        result_cache.store_cached_response(cache_key, response)
+        # The streaming path may already have persisted this response under
+        # the same key; only write when it did not (e.g. it ran with cache
+        # writes disabled) so a miss is stored exactly once.
+        if result_cache.load_cached_response(cache_key, _Path(artifacts_dir)) is None:
+            result_cache.store_cached_response(cache_key, response)
         response.meta["cache_hit"] = False
 
     trace_url = current_trace_url()

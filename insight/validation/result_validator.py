@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import numbers
+from decimal import Decimal
 
 from insight.domain.analysis import AnalysisPlan
 from insight.domain.execution import ExecutionResult
@@ -12,9 +14,17 @@ _SMALL_SAMPLE_THRESHOLD = 30
 def _scan_numeric_issues(table) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     for col_idx, col_name in enumerate(table.columns):
-        for row_idx, row in enumerate(table.rows[:200]):
+        for row_idx, row in enumerate(table.rows):
             value = row[col_idx]
-            if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            if value is None or isinstance(value, bool):
+                continue
+            if not isinstance(value, (numbers.Real, Decimal)):
+                continue
+            try:
+                as_float = float(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if math.isnan(as_float) or math.isinf(as_float):
                 issues.append(
                     ValidationIssue(
                         severity="error",
@@ -25,7 +35,6 @@ def _scan_numeric_issues(table) -> list[ValidationIssue]:
                         step_id=table.step_id,
                     )
                 )
-                break
     return issues
 
 

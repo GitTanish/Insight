@@ -233,6 +233,31 @@ def make_table(step_id: int, name: str, df: pd.DataFrame) -> DataTable:
     )
 
 
+def fold_other_levels(
+    work: pd.DataFrame, group_col: str, other_after: Optional[int]
+) -> tuple[pd.DataFrame, Optional[int]]:
+    """Fold low-frequency levels of `group_col` into an 'Other' row.
+
+    Shared by GroupAggregateOp (for display) and the independent verifier so
+    both sides agree on which levels survive and how many rows were folded.
+    Returns (frame, folded_row_count), or (frame, None) when no fold applies.
+    """
+    if other_after is None or group_col not in work.columns:
+        return work, None
+    if work[group_col].nunique() <= other_after:
+        return work, None
+    level_counts = work[group_col].value_counts()
+    keep_levels = set(level_counts.index[: other_after - 1])
+    folded = int(level_counts.iloc[other_after - 1:].sum())
+    work = work.copy()
+    values = work[group_col]
+    if isinstance(values.dtype, pd.CategoricalDtype):
+        if "Other" not in values.cat.categories:
+            values = values.cat.add_categories(["Other"])
+    work[group_col] = values.where(values.isin(keep_levels), "Other")
+    return work, folded
+
+
 def _fmt_num(v: Any) -> str:
     f = _scalar(v)
     if f is None:
@@ -319,18 +344,13 @@ class GroupAggregateOp(GroupAggregateParams):
         if work.empty:
             raise OperationError("no rows after applying filters")
 
-        if (
-            params.other_after is not None
-            and isinstance(params.group_by, str)
-            and work[params.group_by].nunique() > params.other_after
-        ):
-            gcol = params.group_by
-            level_counts = work[gcol].value_counts()
-            keep_levels = set(level_counts.index[: params.other_after - 1])
-            folded = int(level_counts.iloc[params.other_after - 1:].sum())
-            work = work.copy()
-            work[gcol] = work[gcol].where(work[gcol].isin(keep_levels), "Other")
-            note_extra = f"folded {folded:,} rows from rare levels into 'Other'"
+        if isinstance(params.group_by, str):
+            work, folded = fold_other_levels(work, params.group_by, params.other_after)
+            note_extra = (
+                f"folded {folded:,} rows from rare levels into 'Other'"
+                if folded is not None
+                else None
+            )
         else:
             note_extra = None
 
@@ -1412,6 +1432,10 @@ TABLE_PRODUCING_OPS = frozenset(
     }
 )
 
+# filter_rows mutates the working frame instead of emitting a result table, but
+# the executor still stores that frame for input_step consumers.
+CHAINABLE_OPS = TABLE_PRODUCING_OPS | {"filter_rows"}
+
 
 def _canonical(profile: DatasetProfile, name: Any) -> tuple[str | None, str | None]:
     if not isinstance(name, str):
@@ -1478,10 +1502,10 @@ def validate_plan_columns(
                         f"step {step.step_id}: input_step {step.input_step} comes "
                         f"later in execution order (DAG must be acyclic)"
                     )
-                if target is not None and target.operation not in TABLE_PRODUCING_OPS:
+                if target is not None and target.operation not in CHAINABLE_OPS:
                     issues.append(
                         f"step {step.step_id}: input_step target ({target.operation}) "
-                        f"produces no table; choose one of {sorted(TABLE_PRODUCING_OPS)}"
+                        f"produces no table; choose one of {sorted(CHAINABLE_OPS)}"
                     )
                 if (
                     target is not None

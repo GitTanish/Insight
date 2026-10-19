@@ -194,6 +194,7 @@ async def upload(
 
     flash = None
     contents: dict[str, bytes] = {}
+    frames: dict = {}
     primary_df = None
     primary_display = None
     if not incoming:
@@ -211,6 +212,9 @@ async def upload(
             for table_name, table_df in tables.items():
                 normalized = table_df.to_csv(index=False).encode("utf-8")
                 contents[table_name] = normalized
+                cached, _ = svc.parse_csv_content(normalized)
+                if cached is not None:
+                    frames[table_name] = cached
             if primary_df is None:
                 primary_df = next(iter(tables.values()))
                 primary_display = upload_file.filename
@@ -226,6 +230,8 @@ async def upload(
             profile = profile_dataframe(primary_df, primary_name, content_hash=None)
             findings = findings_to_dicts(generate_briefing(primary_df, profile))
             session.content = contents[primary_name]
+            session.primary_table = primary_name
+            session.frames = frames
             session.uploaded_name = primary_display or primary_name
             session.profile = profile
             session.findings = findings
@@ -341,16 +347,17 @@ async def query(
         approved_plan=plan_payload,
         agentic=_resolve_agentic_flag(agentic),
     )
-    df, err = svc.parse_csv_content(session.content)
+    df = session.frames.get(session.primary_table) if session.primary_table else None
     if df is None:
-        return JSONResponse({"error": err or "dataset unreadable"}, status_code=400)
+        df, err = svc.parse_csv_content(session.content)
+        if df is None:
+            return JSONResponse({"error": err or "dataset unreadable"}, status_code=400)
 
     datasets: dict = {}
-    for name, blob in session.multi_content.items():
-        if name == session.uploaded_name:
-            datasets[name] = df
-            continue
-        parsed, parse_err = svc.parse_csv_content(blob)
+    for name in session.multi_content:
+        parsed = session.frames.get(name)
+        if parsed is None:
+            parsed, _parse_err = svc.parse_csv_content(session.multi_content[name])
         if parsed is not None:
             datasets[name] = parsed
 
@@ -421,9 +428,11 @@ async def api_query(request: Request):
     if not session.has_dataset:
         return JSONResponse({"error": "no dataset uploaded"}, status_code=400)
 
-    df, err = svc.parse_csv_content(session.content)
+    df = session.frames.get(session.primary_table) if session.primary_table else None
     if df is None:
-        return JSONResponse({"error": err}, status_code=400)
+        df, err = svc.parse_csv_content(session.content)
+        if df is None:
+            return JSONResponse({"error": err}, status_code=400)
 
     user_key = request.headers.get("x-insight-key") or (body or {}).get("api_key") or None
     if get_settings().require_user_key and not user_key:
@@ -452,8 +461,10 @@ async def api_query(request: Request):
     from insight.orchestrator import analyze_stream
 
     datasets: dict = {}
-    for name, blob in session.multi_content.items():
-        parsed, _ = svc.parse_csv_content(blob)
+    for name in session.multi_content:
+        parsed = session.frames.get(name)
+        if parsed is None:
+            parsed, _parse_err = svc.parse_csv_content(session.multi_content[name])
         if parsed is not None:
             datasets[name] = parsed
 

@@ -23,7 +23,7 @@ SQL_PLAN = """
   "reason":"join and aggregate"}],
  "charts":[]}
 """
-SQL_EXPLAIN = "**West leads with $100 total.**"
+SQL_EXPLAIN = "**West leads with $140 total.**"
 
 
 class SqlStubChain(AlternateStubChain):

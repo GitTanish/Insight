@@ -4,6 +4,12 @@ import re
 from typing import Any, Iterable
 
 _NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+_DATE_RE = re.compile(r"\b\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}\b")
+_ORDINAL_WORDS = {
+    "rank", "step", "top", "no", "number", "part", "phase", "q",
+    "question", "iteration", "round", "row", "column",
+}
+_ORDINAL_SUFFIXES = ("st", "nd", "rd", "th")
 
 
 def _norm_token(token: str) -> str:
@@ -15,6 +21,25 @@ def _to_float(value: Any):
         return float(_norm_token(str(value)))
     except (TypeError, ValueError):
         return None
+
+
+def _is_ordinal_context(answer: str, start: int, end: int) -> bool:
+    if answer[end:end + 2].lower() in _ORDINAL_SUFFIXES:
+        return True
+    match = re.search(r"([A-Za-z#]+)\s*$", answer[:start])
+    if not match:
+        return False
+    return match.group(1).lower().lstrip("#") in _ORDINAL_WORDS
+
+
+def _is_date_component(answer: str, start: int, end: int) -> bool:
+    window_start = max(0, start - 12)
+    window_end = min(len(answer), end + 12)
+    window = answer[window_start:window_end]
+    for match in _DATE_RE.finditer(window):
+        if window_start + match.start() <= start and end <= window_start + match.end():
+            return True
+    return False
 
 
 def collect_evidence_numbers(calcs, tables, notes: str = "", warnings: Iterable[str] = ()) -> tuple[set[float], str]:
@@ -59,11 +84,10 @@ def find_ungrounded_numbers(
 ) -> list[str]:
     """Numbers stated in `answer` that cannot be traced to computed evidence."""
     floats, evidence_blob = collect_evidence_numbers(calcs, tables, notes, warnings)
-
-    allowed_strings = {
-        "total",
-        "row_count",
+    evidence_tokens = {
+        _norm_token(match.group()) for match in _NUMBER_RE.finditer(evidence_blob)
     }
+
     violations: list[str] = []
     seen: set[str] = set()
     for match in _NUMBER_RE.finditer(answer or ""):
@@ -71,25 +95,31 @@ def find_ungrounded_numbers(
         if raw in seen or raw == "":
             continue
         seen.add(raw)
-        if raw in {s for s in allowed_strings}:
-            continue
         number = _to_float(raw)
         if number is None:
             continue
 
         if round(number, 6) in floats:
             continue
-        if any(
+        suffix = answer[match.end():match.end() + 2].lstrip()
+        if suffix.startswith("%") and any(
             abs(number - candidate * 100) <= max(0.001 * abs(candidate * 100), 0.11)
             for candidate in floats
             if candidate != 0
         ):
             continue
-        if 1900 <= number <= 2100:
+        if (
+            number.is_integer()
+            and len(raw) == 4
+            and raw.isdigit()
+            and 1900 <= number <= 2100
+        ):
             continue
-        if float(number).is_integer() and 1 <= abs(int(number)) <= 31:
+        if _is_ordinal_context(answer, match.start(), match.end()):
             continue
-        if raw in evidence_blob:
+        if _is_date_component(answer, match.start(), match.end()):
+            continue
+        if raw in evidence_tokens:
             continue
         violations.append(raw)
     return violations

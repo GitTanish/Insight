@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import uuid
@@ -20,11 +21,30 @@ def new_session_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def _sniff_delimiter(text: str) -> str | None:
+    sample = "\n".join(line for line in text.splitlines()[:50] if line.strip())
+    if not sample:
+        return None
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters="".join(DELIMITERS))
+    except csv.Error:
+        return None
+    return dialect.delimiter if dialect.delimiter in DELIMITERS else None
+
+
 def parse_csv_content(content: bytes) -> tuple[pd.DataFrame | None, str | None]:
     settings = get_settings()
     last_error = "empty file"
     for encoding in ENCODINGS:
-        for delimiter in DELIMITERS:
+        delimiters = list(DELIMITERS)
+        try:
+            detected = _sniff_delimiter(content.decode(encoding))
+        except UnicodeDecodeError as exc:
+            last_error = f"{encoding}: {exc}"
+            continue
+        if detected:
+            delimiters = [detected] + [d for d in delimiters if d != detected]
+        for delimiter in delimiters:
             try:
                 df = pd.read_csv(
                     io.BytesIO(content), encoding=encoding, delimiter=delimiter

@@ -97,7 +97,9 @@ def test_plan_review_carries_editable_plan_and_question(frame):
 
 
 def test_approved_plan_executes_without_calling_the_planner(frame):
-    llm = ScriptedLLM([PLAN])  # only one scripted response: a planner call would fail
+    llm = ScriptedLLM(
+        ["The approved plan ran on the uploaded data."]
+    )  # only one scripted response: a planner call would fail
     orch._build_chain_for = lambda *a, **k: StubChain(llm)
 
     approved = {
