@@ -1,3 +1,5 @@
+import warnings
+
 import pandas as pd
 import pytest
 
@@ -5,6 +7,7 @@ from insight.analytics.operations import (
     OPERATIONS,
     OperationError,
     apply_filters,
+    operation_catalog,
     validate_plan_columns,
 )
 from insight.domain.analysis import Filter, FilterOperator
@@ -68,6 +71,35 @@ def test_filter_between_and_in():
     assert sorted(inside["g"]) == ["b", "c"]
     contains = apply_filters(df, [Filter(column="g", op=FilterOperator.contains, value="A")])
     assert list(contains["g"]) == ["a"]
+
+
+def test_apply_filters_result_is_mutation_safe():
+    df = pd.DataFrame({"v": ["1", "2", "x"], "g": ["A", "A", "B"]})
+    filtered = apply_filters(df, [Filter(column="g", op=FilterOperator.eq, value="A")])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pd.errors.SettingWithCopyWarning)
+        filtered["v"] = pd.to_numeric(filtered["v"], errors="coerce")
+    assert df["v"].tolist() == ["1", "2", "x"]
+
+
+def test_group_aggregate_with_filter_does_not_warn():
+    df = pd.DataFrame({"g": ["A", "A", "B"], "v": ["1", "2", "3"]})
+    params = OPERATIONS["group_aggregate"].params_model(
+        group_by="g",
+        metrics=[{"column": "v", "agg": "sum"}],
+        filters=[{"column": "g", "op": "eq", "value": "A"}],
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pd.errors.SettingWithCopyWarning)
+        out = OPERATIONS["group_aggregate"].run(df, params, step_id=0)
+    assert out.table.to_dataframe()["sum_v"].tolist() == [3.0]
+    assert df["v"].tolist() == ["1", "2", "3"]
+
+
+def test_catalog_filter_shape_is_flat():
+    catalog = operation_catalog()
+    assert "filters ({column, op, value}[], " in catalog
+    assert "[][]" not in catalog
 
 
 def test_unknown_column_raises(sales_df):

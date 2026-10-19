@@ -135,7 +135,7 @@ def apply_filters(df: pd.DataFrame, filters: list[Filter]) -> pd.DataFrame:
         result = result[_mask_for_filter(result, f)]
     if result is df:
         return df.copy()
-    return result
+    return result.copy()
 
 
 def _fmt_edge(v: Any) -> str:
@@ -1349,7 +1349,7 @@ class FilterRowsOp(FilterRowsParams):
         return df[_mask_for_filter(df, f)]
 
 
-_FILTER_SHAPE = "{column, op, value}[]"
+_FILTER_SHAPE = "{column, op, value}"
 _METRIC_SHAPE = "{'column': str, 'agg': 'count|nunique|sum|mean|median|min|max|std|var', 'alias'?: str}"
 
 _NESTED_HINTS: dict[str, str] = {
