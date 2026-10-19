@@ -61,6 +61,9 @@ temp_plot_*.png
 # Insight artifacts & local outputs
 .artifacts/
 
+# Local reference notes (not for the repo)
+*.local.md
+
 # Promo film render output (regenerate with: python -m promo.build)
 promo/out/
 

@@ -10,8 +10,6 @@
 
 Upload a CSV — or four related ones. Ask anything in plain English. Get verified answers, newspaper-styled charts, a formatted Word report, and production-ready dbt and alert exports.
 
-**[Try the live demo →](https://the-insight-ai.streamlit.app/)**
-
 ---
 
 ## The idea
@@ -32,7 +30,7 @@ Everything here was measured on this repo during development. Nothing is aspirat
 
 | Anchor metric | What it proves |
 |---|---|
-| **20/20** golden-question eval cases passed live (Groq · Mistral · opencode) | the no-invented-numbers policy holds end to end |
+| **20/20** golden-question eval cases passed live across three independent provider setups | the no-invented-numbers policy holds end to end |
 | **Agentic vs single-shot A/B** — apparent pre-fix advantage, mostly explained by a provider bug; post-fix near parity | the edge that survives scrutiny is the **auditable tool trail**, not a proven accuracy gain — resolved in full below |
 | **250K rows**: profiled in **2.0s**, heaviest op **<2s**, bivariate OLS in **125ms** | the deterministic engine holds up at real scale, not toy data |
 | **−31.7% Brier score** after isotonic recalibration; over-confidence flagged at **ECE = 0.245** | calibration audits quantify rather than guess |
@@ -163,7 +161,7 @@ This is the only built-in access gate. See the [deployment note](#configuration)
 
 ## Quickstart
 
-**Prerequisites:** Python 3.10+ (3.11 recommended) and a free [Groq API key](https://console.groq.com).
+**Prerequisites:** Python 3.10+ (3.11 recommended) and an API key for at least one supported provider. Groq is the shipped default and its free tier is enough to start.
 
 ### 1. Clone and set up a virtual environment
 
@@ -195,10 +193,10 @@ cp .env.example .env
 Minimum viable setup:
 
 ```bash
-# Required — pick at least one provider
+# Example — Groq is the shipped default; any one supported provider key works
 GROQ_API_KEY=gsk_your_key_here
 
-# Optional — any of these unlock additional models + cross-provider fallback
+# Optional — add more for extra models + cross-provider fallback
 MISTRAL_API_KEY=your_key_here
 OPENAI_API_KEY=your_key_here
 ANTHROPIC_API_KEY=your_key_here
@@ -252,7 +250,7 @@ The offline unit/integration suite covers the profiler, every analytics operatio
 
 ### Evaluation harness (optional)
 
-Benchmark the full pipeline against deterministic datasets with known ground truth:
+Benchmark the full pipeline against deterministic datasets with known ground truth (`--model` accepts any configured `<provider>/<model-id>`; the examples use the shipped default):
 
 ```bash
 python evaluation/generate_datasets.py          # writes sales/ecommerce/support/retail_250k CSVs
@@ -455,13 +453,13 @@ Still, aggregates and schemas leave your machine: whatever you ask, the numbers 
 
 ## Troubleshooting
 
-**`No provider available`** — no `GROQ_API_KEY`/`MISTRAL_API_KEY` found in `.env` or environment.
+**`No provider available`** — no provider key found in `.env` or the environment. Set at least one (e.g. `GROQ_API_KEY`, `MISTRAL_API_KEY`, `OPENAI_API_KEY`).
 
 **`unknown column 'x'` in the answer** — the model referenced a column that doesn't exist; the repair loop already retried. Rephrase using exact column names from the profile expander.
 
-**Rate limit errors** — Groq free tier allows 30 requests/min on gpt-oss models. Wait a moment, switch to `gpt-oss-20b`, or add a Mistral key for fallback.
+**Rate limit errors** — free tiers have minutely caps (e.g., Groq allows 30 requests/min on gpt-oss models). Wait a moment, switch to a smaller/faster model, or add a second provider key so fallback can kick in.
 
-**Agentic runs feel slow on free tiers** — each turn re-sends the tool history, and Groq's free TPM can spend minutes in silent retry backoff before a call succeeds (the outcome reports `throttled=0`; the wall clock tells the truth). Space calls (`--delay` in the eval runners, `INSIGHT_AGENTIC_DELAY_S` in the app), keep budgets sane, or switch to the built-in NVIDIA NIM endpoint (`NVIDIA_API_KEY`, model `nvidia/openai/gpt-oss-20b`) — it throttles in bursts rather than stretching every call.
+**Agentic runs feel slow on free tiers** — each turn re-sends the tool history, and a provider's free TPM cap can spend minutes in silent retry backoff before a call succeeds (the outcome reports `throttled=0`; the wall clock tells the truth). Space calls (`--delay` in the eval runners, `INSIGHT_AGENTIC_DELAY_S` in the app), keep budgets sane, or switch to a provider with burst-friendly throttling — e.g. NVIDIA NIM (`NVIDIA_API_KEY`, model `nvidia/openai/gpt-oss-20b`).
 
 **Charts not appearing** — check the `.artifacts/web/<session>/` folder is writable; render warnings appear under answers.
 
@@ -511,4 +509,4 @@ Run `pytest` before submitting — CI-friendly, no keys required.
 
 ---
 
-*Built with [Groq](https://groq.com) · [Pydantic](https://docs.pydantic.dev) · [FastAPI](https://fastapi.tiangolo.com) · pandas · scipy*
+*Built with [Pydantic](https://docs.pydantic.dev) · [FastAPI](https://fastapi.tiangolo.com) · pandas · scipy — and any LLM you bring.*
