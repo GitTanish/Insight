@@ -98,7 +98,9 @@ class Settings(BaseModel):
         .lower()
         in {"1", "true", "yes", "on"}
     )
-    max_upload_rows: int = 1_000_000
+    max_upload_rows: int = Field(
+        default_factory=lambda: int(os.getenv("INSIGHT_MAX_UPLOAD_ROWS", "1000000") or 1000000)
+    )
     max_table_rows: int = 100
     # Agentic tool-use mode: the LLM calls engine ops as tools, observes the
     # real computed results, and iterates — bounded by the budgets below.
@@ -118,6 +120,53 @@ class Settings(BaseModel):
         default_factory=lambda: float(os.getenv("INSIGHT_AGENTIC_DELAY_S", "0") or 0)
     )
     artifacts_dir: Path = ROOT_DIR / ".artifacts"
+    # ------------------------------------------------------------------ ops
+    # Optional auth gate. Empty (default) = trusted-network mode; set a strong
+    # token to require Bearer auth or the browser auth cookie on every route.
+    auth_token: str | None = Field(
+        default_factory=lambda: (os.getenv("INSIGHT_AUTH_TOKEN") or "").strip() or None
+    )
+    trust_proxy_auth: bool = Field(
+        default_factory=lambda: os.getenv("INSIGHT_TRUST_PROXY_AUTH", "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
+    cookie_secure: bool = Field(
+        default_factory=lambda: os.getenv("INSIGHT_COOKIE_SECURE", "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
+    session_max: int = Field(
+        default_factory=lambda: int(os.getenv("INSIGHT_SESSION_MAX", "64") or 64)
+    )
+    session_ttl_minutes: int = Field(
+        default_factory=lambda: int(os.getenv("INSIGHT_SESSION_TTL_MINUTES", "240") or 240)
+    )
+    session_max_turns: int = Field(
+        default_factory=lambda: int(os.getenv("INSIGHT_SESSION_MAX_TURNS", "25") or 25)
+    )
+    rate_limit_enabled: bool = Field(
+        default_factory=lambda: os.getenv("INSIGHT_RATE_LIMIT", "on")
+        .strip()
+        .lower()
+        not in {"0", "off", "false", "no"}
+    )
+    rate_limit_per_minute: int = Field(
+        default_factory=lambda: int(os.getenv("INSIGHT_RATE_LIMIT_PER_MINUTE", "60") or 60)
+    )
+    upload_rate_limit_per_minute: int = Field(
+        default_factory=lambda: int(
+            os.getenv("INSIGHT_UPLOAD_RATE_LIMIT_PER_MINUTE", "10") or 10
+        )
+    )
+    artifact_retention_days: int = Field(
+        default_factory=lambda: int(
+            os.getenv("INSIGHT_ARTIFACT_RETENTION_DAYS", "14") or 14
+        )
+    )
+
     custom_base_url: str | None = Field(
         default_factory=lambda: os.getenv("INSIGHT_CUSTOM_BASE_URL") or None
     )

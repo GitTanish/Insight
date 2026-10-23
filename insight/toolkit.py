@@ -20,6 +20,7 @@ import json
 import math
 import threading
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -109,14 +110,33 @@ class AnalysisToolkit:
 
     All mutating methods take an internal lock, so a toolkit instance is safe
     to share between the concurrent tool calls of one MCP client.
+
+    ``file_roots`` restricts ``load_table(path=...)`` to the given directories
+    (``None`` = unrestricted, the webapp/test default; ``[]`` = deny all file
+    loads). ``max_file_bytes`` caps the size read from disk.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        file_roots: Optional[list[str | Path]] = None,
+        max_file_bytes: Optional[int] = None,
+        max_runs: int = 100,
+        max_tables: int = 64,
+    ) -> None:
         self._tables: dict[str, pd.DataFrame] = {}
         self._profiles: dict[str, DatasetProfile] = {}
-        self._runs: dict[str, _RunRecord] = {}
+        self._runs: "OrderedDict[str, _RunRecord]" = OrderedDict()
         self._last_run_id: Optional[str] = None
         self._lock = threading.Lock()
+        self._file_roots = (
+            None
+            if file_roots is None
+            else [Path(root).expanduser().resolve() for root in file_roots]
+        )
+        self._max_file_bytes = max_file_bytes
+        self._max_runs = max(1, int(max_runs))
+        self._max_tables = max(1, int(max_tables))
 
     # ------------------------------------------------------------------ data
 
@@ -139,10 +159,8 @@ class AnalysisToolkit:
                 raw = content.encode("utf-8")
                 frames, err = self._parse_single(table_name, raw)
             else:
-                source = Path(str(path))
-                if not source.exists():
-                    raise ToolkitError(f"file not found: {source}")
-                raw = source.read_bytes()
+                source = self._resolve_source(str(path))
+                raw = self._read_source(source)
                 if source.suffix.lower() in EXCEL_EXTENSIONS:
                     frames, err = parse_tables(source.name, raw)
                 else:
@@ -150,12 +168,64 @@ class AnalysisToolkit:
             if frames is None:
                 raise ToolkitError(err or "could not parse input")
 
+            new_tables = [tname for tname in frames if tname not in self._tables]
+            if len(self._tables) + len(new_tables) > self._max_tables:
+                raise ToolkitError(
+                    f"too many tables (max {self._max_tables}); reload existing "
+                    "names instead of adding new ones"
+                )
+
             summaries = []
             for tname, df in frames.items():
                 self._tables[tname] = df
                 self._profiles[tname] = profile_dataframe(df, tname)
                 summaries.append(self._summary(tname))
             return {"loaded": summaries}
+
+    def _resolve_source(self, path_value: str) -> Path:
+        source = Path(path_value).expanduser()
+        try:
+            resolved = source.resolve(strict=True)
+        except OSError:
+            raise ToolkitError(f"file not found: {source}")
+        if not resolved.is_file():
+            raise ToolkitError(f"not a file: {source}")
+        if self._file_roots is not None and not any(
+            resolved == root or resolved.is_relative_to(root)
+            for root in self._file_roots
+        ):
+            raise ToolkitError(
+                "path is outside the allowed roots: "
+                + ", ".join(str(root) for root in self._file_roots)
+                if self._file_roots
+                else "file loading is disabled (no file roots configured)"
+            )
+        if self._max_file_bytes is not None:
+            try:
+                size = resolved.stat().st_size
+            except OSError:
+                raise ToolkitError(f"file not readable: {source}")
+            if size > self._max_file_bytes:
+                raise ToolkitError(
+                    f"file exceeds the {self._max_file_bytes} byte limit: {source}"
+                )
+        return resolved
+
+    def _read_source(self, source: Path) -> bytes:
+        """Read at most max_file_bytes from the already-resolved path.
+
+        The size check is repeated on the open handle so a file growing between
+        ``stat`` and ``read`` cannot bypass the cap.
+        """
+        if self._max_file_bytes is None:
+            return source.read_bytes()
+        with source.open("rb") as handle:
+            data = handle.read(self._max_file_bytes + 1)
+        if len(data) > self._max_file_bytes:
+            raise ToolkitError(
+                f"file exceeds the {self._max_file_bytes} byte limit: {source}"
+            )
+        return data
 
     @staticmethod
     def _parse_single(
@@ -424,6 +494,8 @@ class AnalysisToolkit:
             run_id=run_id, table=table, plan=plan, execution=execution, df=df
         )
         self._last_run_id = run_id
+        while len(self._runs) > self._max_runs:
+            self._runs.popitem(last=False)
         return run_id
 
     def _run(self, run_id: Optional[str]) -> Optional[_RunRecord]:
@@ -435,6 +507,7 @@ class AnalysisToolkit:
             raise ToolkitError(
                 f"unknown run_id '{target}'. recent runs: {list(self._runs)[-5:]}"
             )
+        self._runs.move_to_end(target)
         return record
 
 

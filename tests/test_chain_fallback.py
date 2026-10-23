@@ -173,3 +173,50 @@ async def test_reasoning_effort_passes_through_when_model_supports_it():
     await chain.generate(request)
 
     assert provider.requests[0].reasoning_effort == "low"
+
+
+@pytest.mark.asyncio
+async def test_provider_throttle_fails_over_before_first_token():
+    from insight.domain.errors import RateLimitError
+
+    throttled = _FakeProvider(
+        "limited", [RateLimitError("limited", "m1", "429", retry_after_s=2)]
+    )
+    healthy = _FakeProvider("healthy", ["served"])
+    chain = _Chain(
+        entries=[
+            (throttled, "m1", _info("limited", "m1")),
+            (healthy, "m2", _info("healthy", "m2")),
+        ],
+        temperature=0.0,
+        reasoning_effort=None,
+    )
+
+    response = await chain.generate(REQUEST)
+
+    assert response.content == "served"
+    assert chain.last_used == "healthy/m2"
+    assert throttled.calls == 1 and healthy.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_all_providers_down_raises_typed_error_with_causes():
+    from insight.domain.errors import ProviderError
+
+    first = _FakeProvider("a", [ProviderError("a", "m1", "boom", status_code=500)])
+    second = _FakeProvider("b", [ProviderError("b", "m2", "down", status_code=503)])
+    chain = _Chain(
+        entries=[
+            (first, "m1", _info("a", "m1")),
+            (second, "m2", _info("b", "m2")),
+        ],
+        temperature=0.0,
+        reasoning_effort=None,
+    )
+
+    with pytest.raises(AllProvidersFailedError) as excinfo:
+        await chain.generate(REQUEST)
+
+    assert len(excinfo.value.errors) == 2
+    assert "boom" in str(excinfo.value)
+    assert "down" in str(excinfo.value)

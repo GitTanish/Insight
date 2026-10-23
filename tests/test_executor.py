@@ -23,6 +23,31 @@ def test_filter_mutation_flows_to_next_step(sales_df):
     assert sum(r[1] for r in table.rows) == result.final_row_count
 
 
+def test_executor_does_not_mutate_the_input_frame(sales_df):
+    import pandas as pd
+
+    before = sales_df.copy(deep=True)
+    plan = AnalysisPlan(
+        objective="t",
+        steps=[
+            PlanStep(step_id=0, operation="filter_rows", params={
+                "column": "units", "op": "gte", "value": 3,
+            }),
+            PlanStep(step_id=1, operation="group_aggregate", params={
+                "group_by": "region",
+                "metrics": [{"agg": "count"}],
+            }),
+            PlanStep(step_id=2, operation="filter_rows", params={
+                "column": "region", "op": "eq", "value": "north",
+            }, input_step=1),
+        ],
+        charts=[],
+    )
+    result = execute_plan_sync(sales_df, plan)
+    assert result.success
+    pd.testing.assert_frame_equal(sales_df, before)
+
+
 def test_unknown_operation_recorded():
     plan = AnalysisPlan(
         objective="t",

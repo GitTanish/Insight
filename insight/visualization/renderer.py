@@ -318,19 +318,19 @@ def render_chart(
             f"(available: {sorted(available)})"
         )
 
-    _apply_theme(theme)
-    fig, ax = plt.subplots(figsize=(8.5, 5.2))
-
-    try:
-        _RENDERERS[spec.chart_type](ax, df, spec, theme)
-        fig.tight_layout()
-        filename = (
-            f"chart_s{table.step_id}_{index}_{_slugify(spec.title)}.png"
-        )
-        path = out_dir / filename
-        fig.savefig(path, dpi=theme.dpi, bbox_inches="tight", facecolor=theme.background)
-    finally:
-        plt.close(fig)
+    with plt.rc_context():
+        _apply_theme(theme)
+        fig, ax = plt.subplots(figsize=(8.5, 5.2))
+        try:
+            _RENDERERS[spec.chart_type](ax, df, spec, theme)
+            fig.tight_layout()
+            filename = (
+                f"chart_s{table.step_id}_{index}_{_slugify(spec.title)}.png"
+            )
+            path = out_dir / filename
+            fig.savefig(path, dpi=theme.dpi, bbox_inches="tight", facecolor=theme.background)
+        finally:
+            plt.close(fig)
 
     return PlotArtifact(
         path=str(path),

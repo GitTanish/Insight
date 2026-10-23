@@ -93,4 +93,14 @@ class LLMProvider(abc.ABC):
         return delay
 
     def _run_sync(self, coro):
-        return asyncio.run(coro)
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            try:
+                from insight.llm.http_pool import close_http_clients
+
+                loop.run_until_complete(close_http_clients())
+            except Exception:
+                pass
+            loop.close()

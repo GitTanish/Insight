@@ -143,7 +143,9 @@ def profile_dataframe(
     name: str,
     content_hash: str | None = None,
 ) -> DatasetProfile:
-    df = df.copy()
+    # Shallow copy: only date-like object columns are replaced below, so the
+    # caller's frame is never mutated without duplicating every column.
+    df = df.copy(deep=False)
     for col in df.columns:
         if str(df[col].dtype) == "object":
             parsed = pd.to_datetime(df[col], errors="coerce", format="mixed")

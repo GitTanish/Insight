@@ -277,3 +277,51 @@ def test_verify_claims_detects_tampered_execution(tk):
     assert report["verified"] is False
     errors = [i for i in report["verification_issues"] if i["severity"] == "error"]
     assert errors and errors[0]["step_id"] == 0
+
+
+def test_file_roots_restrict_path_loading(tmp_path):
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    inside = allowed / "inside.csv"
+    inside.write_text("a,b\n1,2\n", encoding="utf-8")
+    outside = tmp_path / "outside.csv"
+    outside.write_text("a,b\n1,2\n", encoding="utf-8")
+
+    tk = AnalysisToolkit(file_roots=[allowed])
+    assert tk.load_table("ok", path=str(inside))["loaded"][0]["rows"] == 1
+    with pytest.raises(ToolkitError, match="outside the allowed roots"):
+        tk.load_table("bad", path=str(outside))
+
+
+def test_empty_file_roots_disables_path_loading(tmp_path):
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("a\n1\n", encoding="utf-8")
+
+    tk = AnalysisToolkit(file_roots=[])
+    with pytest.raises(ToolkitError, match="disabled"):
+        tk.load_table("x", path=str(csv_path))
+
+
+def test_max_file_bytes_cap(tmp_path):
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("a,b\n" + "1,2\n" * 20, encoding="utf-8")
+
+    tk = AnalysisToolkit(file_roots=[tmp_path], max_file_bytes=10)
+    with pytest.raises(ToolkitError, match="byte limit"):
+        tk.load_table("x", path=str(csv_path))
+
+
+def test_file_roots_reject_symlink_escape(tmp_path):
+    outside = tmp_path / "outside.csv"
+    outside.write_text("a\n1\n", encoding="utf-8")
+    root = tmp_path / "root"
+    root.mkdir()
+    link = root / "link.csv"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unavailable on this platform")
+
+    tk = AnalysisToolkit(file_roots=[root])
+    with pytest.raises(ToolkitError):
+        tk.load_table("x", path=str(link))

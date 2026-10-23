@@ -167,3 +167,59 @@ def test_main_rejects_unknown_transport(monkeypatch):
     monkeypatch.setenv("INSIGHT_MCP_TRANSPORT", "carrier-pigeon")
     with pytest.raises(SystemExit):
         main()
+
+
+def test_resolve_auth_token_requires_token_for_http_transports():
+    from insight.mcp_server import resolve_auth_token
+
+    with pytest.raises(SystemExit):
+        resolve_auth_token("streamable-http", env={})
+    with pytest.raises(SystemExit):
+        resolve_auth_token("sse", env={})
+
+    assert resolve_auth_token("stdio", env={}) is None
+    assert (
+        resolve_auth_token("streamable-http", env={"INSIGHT_MCP_AUTH_TOKEN": "t"})
+        == "t"
+    )
+    assert (
+        resolve_auth_token("sse", env={"INSIGHT_MCP_ALLOW_UNAUTHENTICATED": "1"})
+        is None
+    )
+
+
+def test_bearer_middleware_rejects_and_accepts():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from insight.mcp_server import BearerAuthMiddleware
+
+    app = FastAPI()
+
+    @app.get("/mcp")
+    def endpoint():
+        return {"ok": True}
+
+    with TestClient(BearerAuthMiddleware(app, "secret")) as client:
+        assert client.get("/mcp").status_code == 401
+        assert (
+            client.get("/mcp", headers={"Authorization": "Bearer wrong"}).status_code
+            == 401
+        )
+        assert (
+            client.get("/mcp", headers={"Authorization": "Bearer secret"}).status_code
+            == 200
+        )
+
+
+def test_file_roots_env_policy(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from insight.mcp_server import file_roots_from_env
+
+    assert file_roots_from_env({"INSIGHT_MCP_FILE_ROOTS": str(tmp_path)}) == [tmp_path]
+    assert file_roots_from_env({"INSIGHT_MCP_FILE_ROOTS": "all"}) is None
+    assert file_roots_from_env({"INSIGHT_MCP_FILE_ROOTS": "none"}) == []
+
+    default = file_roots_from_env({})
+    assert default and Path.cwd().resolve() in default

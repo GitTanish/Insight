@@ -2,6 +2,7 @@ import os
 
 os.environ.setdefault("INSIGHT_TRACING", "off")
 os.environ.setdefault("INSIGHT_QUERY_CACHE", "off")
+os.environ.setdefault("INSIGHT_RATE_LIMIT", "off")
 
 import sys
 from pathlib import Path

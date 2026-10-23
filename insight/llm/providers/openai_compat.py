@@ -13,6 +13,7 @@ from insight.domain.errors import (
     RateLimitError,
 )
 from insight.llm.base import LLMProvider, LLMRequest, LLMResponse, ToolCall
+from insight.llm.http_pool import http_client
 from insight.observability import trace_span
 
 
@@ -126,7 +127,7 @@ class OpenAICompatibleProvider(LLMProvider):
         return "reasoning_effort" in detail.lower()
 
     async def _generate_once(self, request: LLMRequest) -> LLMResponse:
-        async with httpx.AsyncClient(timeout=self._timeout_s, transport=self._transport) as client:
+        async with http_client(self.base_url, self._timeout_s, self._transport) as client:
             started = time.monotonic()
             response = await client.post(
                 f"{self.base_url}/chat/completions",
@@ -216,8 +217,8 @@ class OpenAICompatibleProvider(LLMProvider):
         payload = self._payload(request)
         payload["stream"] = True
         try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout_s, transport=self._transport
+            async with http_client(
+                self.base_url, self._timeout_s, self._transport
             ) as client:
                 async with client.stream(
                     "POST",
@@ -269,7 +270,7 @@ class OpenAICompatibleProvider(LLMProvider):
             yield response.content
 
     async def list_models(self) -> list[str]:
-        async with httpx.AsyncClient(timeout=self._timeout_s, transport=self._transport) as client:
+        async with http_client(self.base_url, self._timeout_s, self._transport) as client:
             response = await client.get(
                 f"{self.base_url}/models", headers=self._headers()
             )

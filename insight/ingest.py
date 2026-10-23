@@ -17,6 +17,8 @@ from insight.settings import get_settings
 ENCODINGS = ["utf-8", "utf-8-sig", "latin1", "cp1252"]
 DELIMITERS = [",", ";", "\t"]
 EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
+SNIFF_BYTES = 64 * 1024
+MAX_EXCEL_SHEETS = 64
 
 
 def _sniff_delimiter(text: str) -> str | None:
@@ -33,11 +35,13 @@ def _sniff_delimiter(text: str) -> str | None:
 def parse_csv_content(content: bytes) -> tuple[pd.DataFrame | None, str | None]:
     settings = get_settings()
     last_error = "empty file"
+    row_limit = max(1, settings.max_upload_rows)
     for encoding in ENCODINGS:
         delimiters = list(DELIMITERS)
         try:
-            detected = _sniff_delimiter(content.decode(encoding))
-        except UnicodeDecodeError as exc:
+            sample = content[:SNIFF_BYTES].decode(encoding, errors="ignore")
+            detected = _sniff_delimiter(sample)
+        except (UnicodeDecodeError, LookupError) as exc:
             last_error = f"{encoding}: {exc}"
             continue
         if detected:
@@ -45,13 +49,17 @@ def parse_csv_content(content: bytes) -> tuple[pd.DataFrame | None, str | None]:
         for delimiter in delimiters:
             try:
                 df = pd.read_csv(
-                    io.BytesIO(content), encoding=encoding, delimiter=delimiter
+                    io.BytesIO(content),
+                    encoding=encoding,
+                    delimiter=delimiter,
+                    nrows=row_limit + 1,
                 )
                 if not df.empty and len(df.columns) > 0:
-                    if len(df) > settings.max_upload_rows:
+                    if len(df) > row_limit:
                         return (
                             None,
-                            f"File has {len(df):,} rows (max {settings.max_upload_rows:,})",
+                            f"File has more than {row_limit:,} rows "
+                            f"(max {row_limit:,})",
                         )
                     return df, None
                 last_error = f"parsed with {encoding}/{delimiter!r} but empty"
@@ -75,21 +83,40 @@ def parse_tables(
     frames: dict[str, pd.DataFrame] = {}
     if suffix in EXCEL_EXTENSIONS:
         try:
-            workbook = pd.read_excel(io.BytesIO(content), sheet_name=None)
+            workbook = pd.ExcelFile(io.BytesIO(content))
         except Exception as exc:
             return None, f"Could not parse Excel file: {exc}"
-        stem = sanitize_table_name(Path(filename).stem)
-        seen: set[str] = set()
-        for sheet_name, df in workbook.items():
-            if df is None or df.empty or len(df.columns) == 0:
-                continue
-            base = sanitize_table_name(f"{stem}_{sheet_name}")
-            candidate, n = base, 2
-            while candidate in seen:
-                candidate = f"{base}_{n}"
-                n += 1
-            seen.add(candidate)
-            frames[candidate] = df
+        try:
+            if len(workbook.sheet_names) > MAX_EXCEL_SHEETS:
+                return None, (
+                    f"Workbook has {len(workbook.sheet_names):,} sheets "
+                    f"(max {MAX_EXCEL_SHEETS})"
+                )
+            stem = sanitize_table_name(Path(filename).stem)
+            seen: set[str] = set()
+            for sheet_name in workbook.sheet_names:
+                try:
+                    df = workbook.parse(
+                        sheet_name, nrows=max(1, settings.max_upload_rows) + 1
+                    )
+                except Exception:
+                    continue
+                if df is None or df.empty or len(df.columns) == 0:
+                    continue
+                if len(df) > settings.max_upload_rows:
+                    return None, (
+                        f"Table '{sheet_name}' has {len(df):,} rows "
+                        f"(max {settings.max_upload_rows:,})"
+                    )
+                base = sanitize_table_name(f"{stem}_{sheet_name}")
+                candidate, n = base, 2
+                while candidate in seen:
+                    candidate = f"{base}_{n}"
+                    n += 1
+                seen.add(candidate)
+                frames[candidate] = df
+        finally:
+            workbook.close()
         if not frames:
             return None, "Workbook contains no readable sheets."
     else:

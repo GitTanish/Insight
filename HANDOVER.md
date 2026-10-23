@@ -1,6 +1,6 @@
 # INSIGHT — Session Handover
 
-> Last updated: 2026-10-20 · Engine v2.2.0-alpha · **offline suite green** · **20/20 live eval cases** · **MCP server + verification toolkit (smoke-verified on real data)** · Python 3.11 venv at `.venv`
+> Last updated: 2026-10-23 · Engine v2.3.0 · **offline suite green** · **20/20 live eval cases** · **MCP server + verification toolkit (smoke-verified on real data)** · **production-hardening pass (auth, limits, telemetry, retention, CI scanning)** · Python 3.11 venv at `.venv`
 > Branch note: agentic tool-use mode + alert runner are on `main` (merge `29dcc19`); `feat/agentic-tool-use` carries the subsequent live-verification/hardening pass (providers, eval infra, wire-level fixes, verification docs) as an open PR.
 
 ---
@@ -74,6 +74,12 @@ curl -X POST localhost:8000/api/query -H "Content-Type: application/json" \
 # toolkit + MCP smoke on real public data (manual, not CI; first run downloads 4 CSVs
 # into data/ — needs evaluation/data/, generated once via evaluation/generate_datasets.py)
 python tools/smoke_toolkit.py               # 54 checks: 15 ops + SQL sandbox + DAG + verify_claims + MCP
+
+# production ops (see PRODUCTION_READINESS.md)
+python tools/retention.py --days 14 --dry-run   # artifact retention preview
+python tools/load_test.py --count 20 --workers 8  # upload-path load smoke (no LLM)
+python tools/load_test.py --query --question "Which region leads revenue?" --count 8
+# with auth enabled: add --auth-token ... ; monitor GET /readyz and GET /metrics
 ```
 
 Env: copy `.env.example` → `.env`. Minimum `GROQ_API_KEY=gsk_...`.
@@ -112,16 +118,19 @@ Optional: MISTRAL/OPENAI/ANTHROPIC/OPENROUTER keys, `OLLAMA_BASE_URL`,
 12. **Quota backoff shape differs**: NIM throttles in bursts (220–330 s single-case walls observed unpinned); Groq's free tier stretches every case (~178 s/case) via internal retry backoff, which leaves `throttled=0` even when the run is quota-bound.
 13. **Reasoning-capable models need their capability flag declared**: NIM `gpt-oss-20b` without `supports_reasoning_effort` silently loses the configured `reasoning_effort="low"`; it then burns the whole `max_tokens` budget in the reasoning channel and returns `finish_reason=length` with empty content. Fixed 2026-10-17 (registry flag + `hit max_tokens=N` hint in the empty-content error) — when curating *new* NIM/reasoning models, set the flag deliberately.
 14. **The public superstore / telco CSV copies are polluted (2026-10-20)**: `leonism/sample-superstore` concatenates unrelated sample tables after the real 9,994 rows of `data/superstore.csv` (a People/Region block, then Returns) — slice to the first block (`iloc[:9994]`) for any manual use, as `tools/smoke_toolkit.py` does. The `KimathiNewton/Telco-Customer-Churn` copy stores `SeniorCitizen` as `False/True/0/1` strings and blanks in `TotalCharges`; the ops' numeric coercion handles it, but pandas `== 1` comparisons silently match nothing.
+15. **Middleware order is load-bearing (2026-10-20)**: the last middleware added is the outermost. `webapp/app.py` adds RateLimit → Auth → SecurityHeaders → Telemetry → GZip in that order, so telemetry sees the final status (including 401/429) and auth runs before routing. Tests force `INSIGHT_RATE_LIMIT=off` in `conftest.py`, so the main app never throttles under test — exercise limits on minimal apps with an injected fake-clock limiter.
+16. **MCP HTTP transports require auth (2026-10-20)**: `sse` / `streamable-http` refuse to start without `INSIGHT_MCP_AUTH_TOKEN` (override only deliberately with `INSIGHT_MCP_ALLOW_UNAUTHENTICATED=1`). `load_table(path=...)` defaults to the CWD as its only file root; `INSIGHT_MCP_FILE_ROOTS=all` is unrestricted and `none` disables path loading entirely.
 
 ---
 
 ## 6. Remaining work — build queue (priority order)
 
-> **Status 2026-10-20:** P1–P9 below are DONE (P8 verified by the pinned live
-> A/B, P9 by the real-data smoke — see TEST.md "Verification evidence" and
-> "Toolkit + MCP real-data smoke"). See `future_scope.md` for what's
-> next (external session storage, live database connections, missingness
-> diagnostics).
+> **Status 2026-10-23:** P1–P11 below are DONE (P8 verified by the pinned live
+> A/B, P9 by the real-data smoke, P10 by the offline suite + `pip-audit`, P11 by
+> the offline hardening suite - see TEST.md "Verification evidence" and
+> "Toolkit + MCP real-data smoke"). The remaining production gap is external
+> session state for multi-worker (C9 in `PRODUCTION_READINESS.md`); see
+> `future_scope.md` for product work.
 
 ### P1 — Evaluation harness ✅
 `evaluation/generate_datasets.py` (seeded: sales/ecommerce/support + retail_250k;
@@ -274,8 +283,39 @@ cross-checked against independent pandas/numpy/scipy results and
 filtered group ops) + 3 regression tests. Details: TEST.md "Toolkit + MCP
 real-data smoke".
 
+### P10 — Production hardening ✅
+`PRODUCTION_READINESS.md` is the gate (C1–C10, acceptance checks, non-goals).
+Shipped in this pass: optional auth gate (`INSIGHT_AUTH_TOKEN`, `/auth` bootstrap
+cookie, `INSIGHT_TRUST_PROXY_AUTH` identity, `Secure` cookies) + per-session
+artifact ownership in `webapp/security.py` / `webapp/app.py`; per-identity
+sliding-window rate limits (429 + `Retry-After`) in `webapp/ratelimit.py`;
+request IDs + JSON access log + Prometheus `/metrics` in `webapp/telemetry.py`;
+`/readyz` readiness probe in `webapp/readiness.py`; session LRU + idle TTL in
+`webapp/sessions.py`; artifact retention (`insight/retention.py`,
+`tools/retention.py`, startup sweep); MCP hardening (`INSIGHT_MCP_AUTH_TOKEN`,
+Bearer middleware, `INSIGHT_MCP_FILE_ROOTS` allowlist + size cap, DNS-rebinding
+host allowlist); CI dependency audit (`pip-audit`) + image build/Trivy jobs;
+`tools/load_test.py`; `__version__` synced to 2.3.0. Tests:
+`test_webapp_security.py`, `test_webapp_telemetry.py`, `test_sessions.py`,
+`test_retention.py` plus additions to `test_toolkit.py`, `test_mcp_server.py`,
+`test_chain_fallback.py`. **Not shipped:** external session store / multi-worker
+(C9) — in-memory sessions remain the documented single-worker constraint.
+
+### P11 — Memory / connection / race hardening ✅
+Follow-up audit pass on the P10 surface. Shipped: session generation counters, state
+locks and per-session busy flags (`webapp/sessions.py`); atomic dataset replacement and
+stale-safe background polish; 409/redirect guards for concurrent query, upload and clear;
+snapshot-based exports; bounded conversation history (`INSIGHT_SESSION_MAX_TURNS=25`);
+160 MB aggregate / 6-file upload caps and chunked reads; pre-parse row caps
+(`INSIGHT_MAX_UPLOAD_ROWS=1000000`); atomic cache writes (`cache.py`); bounded toolkit
+run history and table registry (`INSIGHT_MCP_MAX_RUNS` / `INSIGHT_MCP_MAX_TABLES`);
+per-event-loop shared HTTP clients (`insight/llm/http_pool.py`); cached LangSmith client;
+matplotlib `rc_context` isolation; rate-limit key pruning; temp chart-dir sweep for
+library calls. Regression tests in `tests/test_hardening.py` and
+`tests/test_profiler.py`.
+
 ### Explicitly deferred (per owner decision, do not start unprompted)
-Container/subprocess sandboxing (no codegen exists), FastAPI auth/multi-user, PDF export, dashboards.
+Container/subprocess sandboxing (no codegen exists), multi-tenant RBAC/SSO, PDF export, dashboards, external session store (C9 — owner-deferred; requires a consistency model for DataFrames/responses).
 
 ---
 
@@ -296,6 +336,9 @@ Container/subprocess sandboxing (no codegen exists), FastAPI auth/multi-user, PD
 pytest -q                     # expect exit 0; skips vary by platform and optional corpora
 python tools/smoke_toolkit.py # manual: toolkit + MCP on real public data (needs evaluation/data/)
 uvicorn webapp.app:app --port 8000   # boot, upload any CSV, run one query, check SSE stages + View plan
+curl -s localhost:8000/readyz        # readiness JSON (503 until a provider is configured)
+python tools/retention.py --days 14 --dry-run
+python tools/load_test.py --count 20 --workers 8   # upload-path load smoke (no LLM calls)
 python evaluation/run_eval.py --model groq/openai/gpt-oss-120b   # golden-question benchmark
 ```
 

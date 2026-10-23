@@ -265,6 +265,25 @@ class _TailCtx:
     extra_warnings: list[str] = field(default_factory=list)
 
 
+def _prune_temp_artifact_dirs(max_age_s: float = 86_400.0) -> None:
+    """Remove day-old temp chart dirs created for library calls without one."""
+    import shutil
+    import tempfile
+    from pathlib import Path as _PathDir
+
+    cutoff = time.time() - max_age_s
+    try:
+        candidates = _PathDir(tempfile.gettempdir()).glob("insight_artifacts_*")
+        for candidate in candidates:
+            try:
+                if candidate.is_dir() and candidate.stat().st_mtime < cutoff:
+                    shutil.rmtree(candidate, ignore_errors=True)
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
 async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
     """Shared pipeline tail: state, charts, explainer, grounding, response.
 
@@ -291,6 +310,7 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
         # Library callers may omit artifacts_dir; charts still need a directory.
         import tempfile
 
+        _prune_temp_artifact_dirs()
         ctx.artifacts_dir = _PathDir(tempfile.mkdtemp(prefix="insight_artifacts_"))
 
     analysis_state = extract_state_from_plan(plan, base=ctx.state)
@@ -1130,7 +1150,7 @@ async def analyze(
         # The streaming path may already have persisted this response under
         # the same key; only write when it did not (e.g. it ran with cache
         # writes disabled) so a miss is stored exactly once.
-        if result_cache.load_cached_response(cache_key, _Path(artifacts_dir)) is None:
+        if not result_cache.cached_response_exists(cache_key):
             result_cache.store_cached_response(cache_key, response)
         response.meta["cache_hit"] = False
 
@@ -1156,4 +1176,10 @@ def run_analysis_sync(
             analyze(df, profile, request, artifacts_dir, history, state, use_cache, datasets)
         )
     finally:
+        try:
+            from insight.llm.http_pool import close_http_clients
+
+            loop.run_until_complete(close_http_clients())
+        except Exception:
+            pass
         loop.close()

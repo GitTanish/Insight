@@ -138,7 +138,7 @@ The typical agent flow is `load_table → execute_operation/run_plan → write t
 
 Validated against real public data by `tools/smoke_toolkit.py` — 54 checks across superstore, Palmer penguins, telco churn, daily temperatures and the generated evaluation corpora: all 15 ops, SQL sandbox rejections, DAG chaining, verification gates and the MCP flow, each cross-checked against independent pandas/numpy/scipy results and the seeded ground truth. Full evidence: `TEST.md` → "Toolkit + MCP real-data smoke".
 
-Config: `INSIGHT_MCP_TRANSPORT` (`stdio` | `sse` | `streamable-http`), `INSIGHT_MCP_HOST` (default `127.0.0.1`), `INSIGHT_MCP_PORT` (default `8765`).
+Config: `INSIGHT_MCP_TRANSPORT` (`stdio` | `sse` | `streamable-http`), `INSIGHT_MCP_HOST` (default `127.0.0.1`), `INSIGHT_MCP_PORT` (default `8765`). HTTP transports require `INSIGHT_MCP_AUTH_TOKEN` (clients send `Authorization: Bearer ...`) and refuse to start without one; `INSIGHT_MCP_FILE_ROOTS` restricts `load_table(path=...)` (default: the current directory; `all` = unrestricted; `none` = disable), `INSIGHT_MCP_MAX_FILE_MB` caps file reads (default 80 MB), and `INSIGHT_MCP_MAX_RUNS` / `INSIGHT_MCP_MAX_TABLES` bound retained run snapshots (default 100) and registered table names (default 64). DNS-rebinding protection allows localhost hosts by default; extend with `INSIGHT_MCP_ALLOWED_HOSTS`.
 
 ## Alert runner
 
@@ -357,7 +357,7 @@ NVIDIA_API_KEY=nvapi-...
 
 ## Configuration
 
-File limits: up to 1,000,000 rows · CSV (UTF-8/Latin-1/CP1252, delimiters `,` `;` `\t`) · Excel `.xlsx`/`.xls`/`.xlsm` with one table registered per non-empty sheet.
+File limits: up to 1,000,000 rows per table (`INSIGHT_MAX_UPLOAD_ROWS`) · CSV (UTF-8/Latin-1/CP1252, delimiters `,` `;` `\t`) · Excel `.xlsx`/`.xls`/`.xlsm` with one table registered per non-empty sheet (max 64 sheets). The web UI accepts at most 6 files per upload, 80 MB per file and 160 MB total; normalized CSVs are capped at 256 MB. Rows are capped before a full parse, and each session allows one in-flight query or upload at a time.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -375,20 +375,35 @@ File limits: up to 1,000,000 rows · CSV (UTF-8/Latin-1/CP1252, delimiters `,` `
 | `INSIGHT_AGENTIC_MAX_LLM_CALLS` | `9` | hard cap on provider calls per agentic question |
 | `INSIGHT_AGENTIC_DELAY_S` | `0` | seconds between agentic provider calls (throttle headroom on free tiers) |
 | `INSIGHT_REQUIRE_USER_KEY` | `off` | BYOK mode: every query must carry the user's own provider key (`x-insight-key` header / `api_key` body); requests without one get a 401 |
+| `INSIGHT_AUTH_TOKEN` | — | require Bearer auth (API) or the `/auth?token=...` browser cookie on every non-health route |
+| `INSIGHT_TRUST_PROXY_AUTH` | `off` | trust `X-Forwarded-User` from an authenticating reverse proxy instead of the shared token |
+| `INSIGHT_COOKIE_SECURE` | `off` | mark session/auth cookies `Secure` (set when serving over TLS) |
+| `INSIGHT_RATE_LIMIT` | `on` | per-identity sliding-window limits on query/upload routes |
+| `INSIGHT_RATE_LIMIT_PER_MINUTE` | `60` | query requests/minute per identity |
+| `INSIGHT_UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` | uploads/minute per identity |
+| `INSIGHT_SESSION_MAX` | `64` | LRU cap on in-memory sessions |
+| `INSIGHT_SESSION_TTL_MINUTES` | `240` | idle TTL after which a session is dropped |
+| `INSIGHT_SESSION_MAX_TURNS` | `25` | retained conversation turns per session (oldest dropped) |
+| `INSIGHT_MAX_UPLOAD_ROWS` | `1000000` | rows accepted per uploaded table, enforced before full parsing |
+| `INSIGHT_ARTIFACT_RETENTION_DAYS` | `14` | startup sweep of `.artifacts/web/*` older than this (`tools/retention.py` for cron) |
 | `INSIGHT_CUSTOM_BASE_URL` | — | base URL for any OpenAI-compatible service |
 | `INSIGHT_CUSTOM_API_KEY` | — | key for that service |
 | `INSIGHT_CUSTOM_MODELS` | — | comma-separated model ids; empty = auto-discover via `GET {base_url}/models` |
 | `INSIGHT_CUSTOM_DISCOVERY` | `on` | off = show only the curated `INSIGHT_CUSTOM_MODELS` list |
 | `INSIGHT_CUSTOM_NAME` | `custom` | display name for the custom provider in the UI |
 
-**Deployment note:** the webapp is single-worker by design — sessions (CSV bytes, profile, turns) live in process memory. Run exactly one uvicorn worker; horizontal scaling requires externalizing session state first. Put a TLS-terminating reverse proxy in front before exposing beyond localhost. There is no built-in auth or rate limiting — turn on BYOK if you need to stop strangers from spending your provider quota.
+**Deployment note:** the webapp is single-worker by design — sessions (CSV bytes, profile, turns) live in process memory. Run exactly one uvicorn worker; horizontal scaling requires externalizing session state first. Sessions allow one in-flight query/upload at a time (concurrent work gets 409/redirect), retain at most 25 turns, and are never evicted while busy. Cache publishes are atomic. Set `INSIGHT_AUTH_TOKEN` (or run behind an authenticating proxy with `INSIGHT_TRUST_PROXY_AUTH=on`) plus `INSIGHT_COOKIE_SECURE=on` under TLS before exposing it beyond localhost. Query/upload rate limits are on by default; `/metrics` and `/readyz` support monitoring. The full production criteria, current gaps (multi-worker is the big one) and acceptance checks are in [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md).
 
 ## Project structure
 
 ```
 webapp/                  FastAPI UI (primary)
 ├── app.py               routes: upload / SSE query stream / export / JSON API / models refresh
-├── sessions.py          cookie-keyed server-side sessions (single-worker)
+├── sessions.py          cookie-keyed server-side sessions (TTL + LRU, single-worker)
+├── security.py          optional auth gate, identity, response hardening
+├── ratelimit.py         per-identity sliding-window limits (429 + Retry-After)
+├── telemetry.py         request IDs, JSON access log, Prometheus metrics
+├── readiness.py         /readyz checks (artifacts writable + provider configured)
 ├── services.py          Streamlit-free CSV/profile helpers
 ├── templates/           Jinja2 (base, index, partials)
 └── static/              editorial CSS + SSE client glue
@@ -412,13 +427,14 @@ main.py                  Streamlit entry point (legacy UI, same engine)
 │   ├── toolkit.py       agent-facing engine API: load/run/verify, no LLM
 │   ├── mcp_server.py    MCP wrapper exposing the toolkit (stdio/HTTP)
 │   ├── cache.py         query-result cache (TTL + size-budget eviction)
+│   ├── retention.py     artifact retention sweeper (startup + CLI)
 │   ├── reports/         shared DOCX builder + dbt/alert artifact generators
 │   ├── visualization/   Editorial theme + chart renderer from ChartSpec
 │   ├── observability.py optional LangSmith tracing glue (no key → no-op)
 │   ├── settings.py      env-var config model — every INSIGHT_* default lives here
 │   └── orchestrator.py  plan → execute → validate → repair → render → explain (+ streaming variant)
 ├── evaluation/          golden-question harness: generator, 20 cases, single-shot + agentic runners, k-rep aggregator, scorer/reporter
-├── tools/               companion workers (alert_runner: cron → DuckDB → webhook) + mutation sampler + SSE smoke test + real-data toolkit/MCP smoke (smoke_toolkit)
+├── tools/               companion workers (alert_runner, load_test, retention) + mutation sampler + SSE smoke test + real-data toolkit/MCP smoke (smoke_toolkit)
 ├── tests/               pytest suite (fake LLM + adversarial agentic suite, zero network needed)
 ├── promo/               standalone 30s product film, rendered frame-by-frame from code (see promo/README.md)
 ├── data/                sample datasets used by tests and logs
@@ -489,6 +505,7 @@ Every statistical claim above is a textbook method executed by deterministic cod
 - **Context protection.** Full tabular datasets are never dumped into the LLM context window. The provider receives only schema definitions, statistical fingerprints (column types, cardinality, missingness, sampled summaries), and the small set of computed aggregate values a given answer actually cites.
 - **Sanitized SQL.** DuckDB queries are accepted only as a single read-only `SELECT`/`WITH` statement. Destructive and administrative keywords (`ATTACH`, `COPY`, `DROP`, `PRAGMA`, …) are rejected, the connection runs in-memory with external access disabled and configuration locked, results are row-capped, and a hard 10-second interrupt aborts runaway queries.
 - **Key handling.** Provider keys are read from `.env` or the environment and never logged. In BYOK mode, user keys travel per-request and are never persisted server-side.
+- **Optional access control.** Set `INSIGHT_AUTH_TOKEN` to require Bearer auth (API) or the `/auth?token=...` cookie (browser) on every non-health route, or run behind an authenticating proxy with `INSIGHT_TRUST_PROXY_AUTH=on`. Queries and uploads are rate-limited per identity by default, sessions have an idle TTL and LRU cap, and generated artifacts are only served to the session that created them. Retention (`.artifacts/web/*`) is configurable and can be swept on startup or via `tools/retention.py`.
 
 Still, aggregates and schemas leave your machine: whatever you ask, the numbers behind the answer are sent to your configured provider. Don't upload datasets whose derived statistics you wouldn't paste into a chat model.
 
@@ -520,9 +537,11 @@ Agent-mode runs add an `agentic.run_loop` span plus one span per model turn, wit
 
 Tracing is fully optional — with no key the engine runs identically and posts nothing.
 
+Operational endpoints are always on and need no key: `GET /healthz` (liveness), `GET /readyz` (readiness — artifacts writable and a provider configured; 503 otherwise), and `GET /metrics` (Prometheus text: request counts/latency by normalized path, active sessions, uptime). Every response carries `X-Request-ID` (inbound IDs are preserved) and the server logs one JSON access line per request. The criteria these satisfy — and the gaps that remain (multi-worker session state above all) — live in [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md).
+
 ## Roadmap
 
-Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · token-by-token answer streaming & prefix caching ✅ · human-in-the-loop plan approval ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction (API & SSE streaming paths) ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅ · agentic tool-use mode + alert-runner companion worker ✅ · agentic A/B eval harness + k-rep aggregator ✅ · MCP server + verification toolkit for external agents ✅
+Completed: zero-prompt briefing ✅ · statistical engine (t-test / Mann-Whitney / chi-square / Cramer's V) ✅ · chained DAG plans ✅ · independent result verification ✅ · FastAPI + SSE front-end ✅ · token-by-token answer streaming & prefix caching ✅ · human-in-the-loop plan approval ✅ · LangSmith observability ✅ · statistics depth (ANOVA + eta-squared, OLS regression, confidence intervals) ✅ · isotonic calibration audits ✅ · conversation state machine ✅ · golden-question evaluation harness ✅ · Dockerfile + CI + query-result cache with eviction (API & SSE streaming paths) ✅ · embedded DuckDB relational analytics + dbt/alert artifact exports ✅ · agentic tool-use mode + alert-runner companion worker ✅ · agentic A/B eval harness + k-rep aggregator ✅ · MCP server + verification toolkit for external agents ✅ · production hardening (auth gate, rate limits, request IDs/metrics/readiness, session TTL + artifact retention, dependency/image scanning) ✅
 
 **Up next** (detailed notes in [HANDOVER.md](HANDOVER.md) and [future_scope.md](future_scope.md)):
 

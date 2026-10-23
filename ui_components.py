@@ -143,6 +143,8 @@ def _render_sidebar():
             st.success(f"{uploaded.name} loaded")
         elif st.session_state.uploaded_content is not None:
             clear_session(st.session_state.session_id)
+            st.session_state.uploaded_content = None
+            st.session_state.uploaded_name = None
             st.rerun()
 
         models = _sorted_models()
@@ -491,6 +493,9 @@ def _handle_input(df, profile, selection):
             return
 
     st.session_state.turns.append({"question": question, "response": response})
+    max_turns = get_settings().session_max_turns
+    if len(st.session_state.turns) > max_turns:
+        st.session_state.turns = st.session_state.turns[-max_turns:]
     if response.meta.get("analysis_state"):
         st.session_state.analysis_state = response.meta["analysis_state"]
     _render_assistant_turn(response)

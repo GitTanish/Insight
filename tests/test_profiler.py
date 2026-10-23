@@ -65,3 +65,11 @@ def test_summary_for_planner_compact(sales_df):
     assert "rows=60" in summary
     assert "revenue" in summary
     assert len(summary) < 2000
+
+
+def test_profiling_does_not_mutate_the_input_frame():
+    df = pd.DataFrame({"date": ["2025-01-01", "2025-02-02"], "value": [1, 2]})
+    profile = make_profile(df)
+    roles = {c.name: c.role.value for c in profile.columns}
+    assert roles["date"] == "datetime"
+    assert df["date"].dtype == object

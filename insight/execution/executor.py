@@ -12,7 +12,7 @@ from insight.domain.execution import ExecutionResult, StepResult
 
 def execute_plan_sync(df, plan: AnalysisPlan, duck_ctx=None) -> ExecutionResult:
     started = time.monotonic()
-    working = df.copy()
+    working = df
     frames: dict[int, object] = {}
     step_results: list[StepResult] = []
 
@@ -45,7 +45,7 @@ def execute_plan_sync(df, plan: AnalysisPlan, duck_ctx=None) -> ExecutionResult:
                     )
                 )
                 continue
-            input_frame = source.copy()
+            input_frame = source
 
         try:
             params = spec.params_model.model_validate(step.params)
@@ -68,7 +68,7 @@ def execute_plan_sync(df, plan: AnalysisPlan, duck_ctx=None) -> ExecutionResult:
             output = spec.run(input_frame, params, step.step_id, duck_ctx)
             if spec.mutates and spec.mutate is not None:
                 mutated = spec.mutate(input_frame, params)
-                frames[step.step_id] = mutated.copy()
+                frames[step.step_id] = mutated
                 if step.input_step is None:
                     working = mutated
             elif output.table is not None:

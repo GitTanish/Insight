@@ -218,3 +218,44 @@ docker run -p 8000:8000 --env-file .env insight
 ```
 
 Single worker by design (in-memory sessions) — see README deployment notes.
+
+---
+
+## Optional: production / shared deployment
+
+Before exposing the webapp beyond localhost, set an auth boundary and TLS:
+
+```bash
+# .env
+INSIGHT_AUTH_TOKEN=<long-random-token>
+INSIGHT_COOKIE_SECURE=on
+```
+
+- **API clients** send `Authorization: Bearer <token>`.
+- **Browsers** open `http://<host>:8000/auth?token=<token>` once; the server sets an
+  `HttpOnly`, `SameSite=Lax` cookie. The token is then stripped from the URL.
+- Behind an authenticating proxy, set `INSIGHT_TRUST_PROXY_AUTH=on` instead and have
+  the proxy send `X-Forwarded-User`.
+
+Other defaults in this mode: query/upload rate limits per identity
+(`INSIGHT_RATE_LIMIT_PER_MINUTE=60`, `INSIGHT_UPLOAD_RATE_LIMIT_PER_MINUTE=10`,
+429 + `Retry-After` when exceeded); sessions expire after
+`INSIGHT_SESSION_TTL_MINUTES=240` idle and are capped at `INSIGHT_SESSION_MAX=64`;
+uploaded tables are capped at `INSIGHT_MAX_UPLOAD_ROWS=1000000` rows, at most 6 files
+per upload / 80 MB each / 160 MB total, and each session retains at most
+`INSIGHT_SESSION_MAX_TURNS=25` turns while allowing one in-flight query or upload;
+generated artifacts older than `INSIGHT_ARTIFACT_RETENTION_DAYS=14` are swept at
+startup (run `python tools/retention.py --days 14 --dry-run` for a preview, or via
+cron without `--dry-run`). Artifacts are only served to the session that created them.
+
+Monitoring: `GET /readyz` (503 until a provider is configured), `GET /metrics`
+(Prometheus text), and `X-Request-ID` on every response. Run a load smoke against
+the upload path before opening traffic:
+
+```bash
+python tools/load_test.py --base-url http://127.0.0.1:8000 --count 20 --workers 8
+```
+
+The remaining structural gap is multi-worker deployment: sessions live in process
+memory, so run exactly one uvicorn worker. Full criteria and gaps:
+[`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md).

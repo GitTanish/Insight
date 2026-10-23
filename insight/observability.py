@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import contextlib
-import functools
 import os
+import threading
 from typing import Any, Callable, Iterator, Optional
 
 from insight.settings import get_settings
@@ -16,6 +16,51 @@ except ImportError:
     _ls_traceable = None
     _LSClient = None
     LANGSMITH_AVAILABLE = False
+
+
+_CLIENT_LOCK = threading.Lock()
+_CLIENT: Any = None
+_CLIENT_FAILED = False
+
+
+def _get_client() -> Any:
+    """Reuse one LangSmith client; constructing one per query leaks sessions."""
+    global _CLIENT, _CLIENT_FAILED
+
+    if not LANGSMITH_AVAILABLE or _LSClient is None:
+        return None
+    with _CLIENT_LOCK:
+        if _CLIENT is not None:
+            return _CLIENT
+        if _CLIENT_FAILED:
+            return None
+        try:
+            _CLIENT = _LSClient()
+        except Exception:
+            _CLIENT_FAILED = True
+            return None
+        return _CLIENT
+
+
+def close_langsmith_client() -> None:
+    global _CLIENT, _CLIENT_FAILED
+
+    with _CLIENT_LOCK:
+        client = _CLIENT
+        _CLIENT = None
+        _CLIENT_FAILED = False
+    if client is None:
+        return
+    try:
+        session = getattr(client, "session", None)
+        if session is not None and hasattr(session, "close"):
+            session.close()
+            return
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+    except Exception:
+        pass
 
 
 def configure_langsmith() -> bool:
@@ -43,11 +88,7 @@ def configure_langsmith() -> bool:
     if not enabled:
         return False
 
-    try:
-        _LSClient()
-    except Exception:
-        return False
-    return True
+    return _get_client() is not None
 
 
 def is_tracing_enabled() -> bool:
@@ -115,9 +156,9 @@ def start_root_run(name: str, inputs: dict) -> tuple[Any, Any]:
     if not is_tracing_enabled():
         return None, None
     try:
-        from langsmith import Client
-
-        client = Client()
+        client = _get_client()
+        if client is None:
+            return None, None
         run = client.create_run(
             name=name,
             run_type="chain",

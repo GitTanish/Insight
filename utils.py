@@ -18,7 +18,7 @@ ENCODINGS = ["utf-8", "utf-8-sig", "latin1", "cp1252"]
 DELIMITERS = [",", ";", "\t"]
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=2, ttl=3600)
 def parse_csv(content: bytes) -> tuple[pd.DataFrame | None, str | None]:
     settings = get_settings()
     last_error = "empty file"
@@ -27,23 +27,31 @@ def parse_csv(content: bytes) -> tuple[pd.DataFrame | None, str | None]:
 
         import openpyxl  # noqa: F401
 
-        workbook = pd.read_excel(_io.BytesIO(content), sheet_name=None)
-        for sheet_df in workbook.values():
-            if sheet_df is not None and not sheet_df.empty and len(sheet_df.columns):
-                if len(sheet_df) > settings.max_upload_rows:
-                    return (
-                        None,
-                        f"File has {len(sheet_df):,} rows "
-                        f"(max {settings.max_upload_rows:,})",
-                    )
-                return sheet_df, None
+        workbook = pd.ExcelFile(_io.BytesIO(content))
+        try:
+            for sheet_name in workbook.sheet_names:
+                sheet_df = workbook.parse(
+                    sheet_name, nrows=settings.max_upload_rows + 1
+                )
+                if sheet_df is not None and not sheet_df.empty and len(sheet_df.columns):
+                    if len(sheet_df) > settings.max_upload_rows:
+                        return (
+                            None,
+                            f"File has more than {settings.max_upload_rows:,} rows",
+                        )
+                    return sheet_df, None
+        finally:
+            workbook.close()
     except Exception:
         pass
     for encoding in ENCODINGS:
         for delimiter in DELIMITERS:
             try:
                 df = pd.read_csv(
-                    io.BytesIO(content), encoding=encoding, delimiter=delimiter
+                    io.BytesIO(content),
+                    encoding=encoding,
+                    delimiter=delimiter,
+                    nrows=settings.max_upload_rows + 1,
                 )
                 if not df.empty and len(df.columns) > 0:
                     if len(df) > settings.max_upload_rows:
@@ -59,7 +67,7 @@ def parse_csv(content: bytes) -> tuple[pd.DataFrame | None, str | None]:
     return None, f"Could not parse file. Last attempt — {last_error}"
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=8, ttl=3600)
 def compute_profile(content: bytes, name: str) -> DatasetProfile | None:
     import hashlib
 
@@ -74,16 +82,26 @@ def new_session_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False, max_entries=4)
 def discover_models_cached(_force_token: int = 0) -> list[dict]:
     import asyncio
 
     from insight.llm.registry import discover_models as _discover
 
+    loop = asyncio.new_event_loop()
     try:
-        infos = asyncio.run(_discover())
-    except Exception:
-        infos = []
+        try:
+            infos = loop.run_until_complete(_discover())
+        except Exception:
+            infos = []
+    finally:
+        try:
+            from insight.llm.http_pool import close_http_clients
+
+            loop.run_until_complete(close_http_clients())
+        except Exception:
+            pass
+        loop.close()
     return [i.model_dump() for i in infos]
 
 

@@ -3,14 +3,13 @@ from __future__ import annotations
 import time
 from typing import Any, ClassVar
 
-import httpx
-
 from insight.domain.errors import (
     ProviderAuthError,
     ProviderError,
     RateLimitError,
 )
 from insight.llm.base import LLMRequest, LLMResponse, ToolCall
+from insight.llm.http_pool import http_client
 from insight.llm.providers.openai_compat import OpenAICompatibleProvider
 from insight.observability import trace_span
 
@@ -113,7 +112,7 @@ class AnthropicProvider(OpenAICompatibleProvider):
 
     @trace_span("provider.generate", run_type="llm")
     async def _generate_once(self, request: LLMRequest) -> LLMResponse:
-        async with httpx.AsyncClient(timeout=self._timeout_s, transport=self._transport) as client:
+        async with http_client(self.base_url, self._timeout_s, self._transport) as client:
             started = time.monotonic()
             response = await client.post(
                 f"{self.base_url}/messages",
@@ -173,7 +172,7 @@ class AnthropicProvider(OpenAICompatibleProvider):
         )
 
     async def list_models(self) -> list[str]:
-        async with httpx.AsyncClient(timeout=self._timeout_s, transport=self._transport) as client:
+        async with http_client(self.base_url, self._timeout_s, self._transport) as client:
             response = await client.get(
                 f"{self.base_url}/models", headers=self._headers()
             )
