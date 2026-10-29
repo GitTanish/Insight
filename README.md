@@ -7,6 +7,7 @@
 [![Pydantic](https://img.shields.io/badge/pydantic-v2-green.svg)](https://docs.pydantic.dev)
 [![Tests](https://img.shields.io/badge/tests-CI%20green-brightgreen.svg)](#5-run-the-test-suite-optional-but-encouraged)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/GitTanish/badge.svg)](https://hub.xerj.org/contributors/GitTanish)
 
 Upload a CSV — or four related ones. Ask anything in plain English. Get verified answers, newspaper-styled charts, a formatted Word report, and production-ready dbt and alert exports.
 
