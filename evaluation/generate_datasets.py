@@ -101,6 +101,8 @@ def make_ecommerce(rng: np.random.Generator) -> tuple[pd.DataFrame, dict]:
         "top_channel_by_sessions": str(df["channel"].mode().iloc[0]),
         "lead_score_ece": report.ece,
         "lead_score_brier_raw": round(report.brier_raw, 6),
+        "lead_score_brier_calibrated": round(report.brier_calibrated, 6),
+        "lead_score_brier_improvement": report.brier_improvement,
         "row_count": int(n),
     }
     return df, truth
