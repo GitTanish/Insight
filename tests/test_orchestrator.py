@@ -93,7 +93,7 @@ def test_explainer_receives_rendered_figure_list(stub_chain_factory, sales_df, p
     explainer_call = llm.requests[1]
     user_content = explainer_call.messages[1].content
     assert "Rendered figures" in user_content
-    assert '1. bar — "Revenue by Region"' in user_content
+    assert '1. bar chart: "Revenue by Region"' in user_content
 
     system_content = explainer_call.messages[0].content
     assert "ONLY figures listed" in system_content

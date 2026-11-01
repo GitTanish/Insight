@@ -205,3 +205,12 @@ def test_store_runs_sweep_before_write(tmp_path, monkeypatch):
 
     assert calls == [1]
     assert (tmp_path / "cache" / "testkey.json").exists()
+
+
+def test_cache_key_includes_render_schema_version(profile, tmp_path, monkeypatch):
+    _enable_cache(monkeypatch, tmp_path)
+    request = AnalysisRequest(question="Which region has the highest revenue?")
+    before = result_cache.cache_key_for(profile, request)
+    monkeypatch.setattr(result_cache, "_CACHE_SCHEMA_VERSION", "render=next")
+    after = result_cache.cache_key_for(profile, request)
+    assert before and after and before != after
