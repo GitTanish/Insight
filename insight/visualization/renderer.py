@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 
 import matplotlib
 
@@ -108,6 +109,12 @@ def _tick_formatter():
     return FuncFormatter(lambda val, _: _human_number(val))
 
 
+def _metric_number(value: float) -> str:
+    if float(value).is_integer():
+        return f"{int(value):,}"
+    return f"{value:,.2f}"
+
+
 _GLYPH_SUBSTITUTIONS = {
     "\u2011": "-",   # non-breaking hyphen
     "\u2010": "-",
@@ -143,6 +150,66 @@ def _style_axes(ax, spec: ChartSpec, theme: EditorialTheme, title_override: str 
         ax.set_xlabel(_font_safe(spec.x_label))
     if spec.y_label:
         ax.set_ylabel(_font_safe(spec.y_label))
+
+
+def _render_single_value(
+    ax,
+    label: str,
+    value: float,
+    spec: ChartSpec,
+    theme: EditorialTheme,
+    title: str,
+) -> None:
+    """Render a one-row result as a metric card instead of a one-bar chart."""
+    ax.axis("off")
+    ax.set_title(
+        _font_safe(title),
+        fontsize=14,
+        fontweight="bold",
+        loc="left",
+        pad=12,
+        color=theme.foreground,
+    )
+    ax.text(
+        0.06,
+        0.64,
+        _font_safe(str(label))[:40],
+        transform=ax.transAxes,
+        fontsize=13,
+        color=theme.muted,
+        va="center",
+        ha="left",
+    )
+    ax.text(
+        0.06,
+        0.40,
+        _metric_number(value),
+        transform=ax.transAxes,
+        fontsize=46,
+        fontweight="bold",
+        color=theme.accent,
+        va="center",
+        ha="left",
+    )
+    caption = spec.y_label or spec.y
+    if caption:
+        ax.text(
+            0.06,
+            0.24,
+            _font_safe(str(caption).replace("_", " ")),
+            transform=ax.transAxes,
+            fontsize=10,
+            color=theme.tertiary_muted,
+            va="center",
+            ha="left",
+        )
+    ax.plot(
+        [0.06, 0.94],
+        [0.54, 0.54],
+        transform=ax.transAxes,
+        color=theme.foreground,
+        linewidth=0.8,
+    )
 
 
 def _render_bar_or_pie(
@@ -198,6 +265,11 @@ def _render_bar_or_pie(
     )
     labels = kept_labels.reset_index(drop=True)
     values = kept_values.reset_index(drop=True)
+    if len(values) == 1:
+        _render_single_value(
+            ax, str(labels.iloc[0]), float(values.iloc[0]), spec, theme, title
+        )
+        return
 
     max_label_len = max((len(str(l)) for l in labels), default=0)
     use_horizontal = len(labels) > 6 and max_label_len > 12
@@ -297,6 +369,8 @@ _RENDERERS = {
     ChartType.hist: _render_hist,
 }
 
+_RENDER_LOCK = threading.Lock()
+
 
 def render_chart(
     spec: ChartSpec,
@@ -318,7 +392,7 @@ def render_chart(
             f"(available: {sorted(available)})"
         )
 
-    with plt.rc_context():
+    with _RENDER_LOCK, plt.rc_context():
         _apply_theme(theme)
         fig, ax = plt.subplots(figsize=(8.5, 5.2))
         try:

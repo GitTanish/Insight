@@ -347,13 +347,27 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
     yield {"type": "stage", "key": "rendering", "label": "Rendering editorial charts..."}
     t_charts = time.monotonic()
     ctx.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    tables_by_step = execution.tables_by_step()
     with trace_phase("visualization.render_charts", charts=len(plan.charts)):
-        plots, chart_warnings = render_charts(
-            plan.charts, execution.tables_by_step(), ctx.artifacts_dir, EDITORIAL_THEME
+        plots, chart_warnings = await asyncio.to_thread(
+            render_charts,
+            plan.charts,
+            tables_by_step,
+            ctx.artifacts_dir,
+            EDITORIAL_THEME,
         )
     charts_ms = int((time.monotonic() - t_charts) * 1000)
+
+    def _figure_kind(plot) -> str:
+        table = tables_by_step.get(plot.step_id)
+        if plot.chart_type == "bar" and table is not None and (
+            table.total_rows == 1 or len(table.rows) == 1
+        ):
+            return "metric card"
+        return f"{plot.chart_type} chart"
+
     figures_text = "\n".join(
-        f"{i}. {plot.chart_type} — \"{plot.title}\""
+        f'{i}. {_figure_kind(plot)}: "{plot.title}"'
         for i, plot in enumerate(plots, start=1)
     )
 

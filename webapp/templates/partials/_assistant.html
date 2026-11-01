@@ -116,7 +116,7 @@
         <div class="followups">
             <span class="mono-label">Suggested next</span>
             {% for q in response.meta['followups'] %}
-                <button class="btn tiny followup" data-q="{{ q }}">{{ q }}</button>
+                <button type="button" class="btn tiny followup" data-q="{{ q }}">{{ q }}</button>
             {% endfor %}
         </div>
     {% endif %}

@@ -149,7 +149,7 @@ def _provider_status() -> list[dict]:
             {
                 "name": spec.name.title(),
                 "enabled": enabled,
-                "dot": "\U0001F7E2" if enabled else "\u26AA",
+                "status": "on" if enabled else "off",
                 "state": f"{count} models" if enabled else f"set {hint}",
             }
         )

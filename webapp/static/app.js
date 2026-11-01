@@ -60,14 +60,21 @@
             return key ? { "X-Insight-Key": key } : {};
         }
 
-        document.querySelectorAll("[data-q]").forEach(function (btn) {
-            btn.addEventListener("click", function () {
-                if (!textarea) return;
-                textarea.value = btn.getAttribute("data-q");
-                textarea.focus();
-                textarea.scrollIntoView({ behavior: "smooth", block: "center" });
+        function bindDataQ(root) {
+            if (!root) return;
+            root.querySelectorAll("[data-q]").forEach(function (btn) {
+                if (btn.dataset.insightBound === "1") return;
+                btn.dataset.insightBound = "1";
+                btn.addEventListener("click", function () {
+                    if (!textarea) return;
+                    textarea.value = btn.getAttribute("data-q");
+                    textarea.focus();
+                    textarea.scrollIntoView({ behavior: "smooth", block: "center" });
+                });
             });
-        });
+        }
+
+        bindDataQ(document);
 
         if (!composer || !textarea) return;
 
@@ -153,27 +160,6 @@
             wrap.appendChild(bubble);
             chat.appendChild(wrap);
             wrap.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-
-        function bindFollowups(questions) {
-            if (!chat || !questions || !questions.length) return;
-            const wrap = document.createElement("div");
-            wrap.className = "followups";
-            const label = document.createElement("span");
-            label.className = "mono-label";
-            label.textContent = "Suggested next";
-            wrap.appendChild(label);
-            questions.forEach(function (q) {
-                const btn = document.createElement("button");
-                btn.className = "btn tiny followup";
-                btn.textContent = q;
-                btn.addEventListener("click", function () {
-                    textarea.value = q;
-                    textarea.focus();
-                });
-                wrap.appendChild(btn);
-            });
-            chat.appendChild(wrap);
         }
 
         let liveBubble = null;
@@ -445,8 +431,6 @@
                         setStage("validating", payload.valid
                             ? "Validated " + payload.warning_count + " caveat(s)"
                             : "Validator rejected results");
-                    } else if (event === "suggestions") {
-                        bindFollowups(payload.followups || []);
                     } else if (event === "tool_call") {
                         onToolCall(payload);
                     } else if (event === "tool_result") {
@@ -463,7 +447,10 @@
                         if (bubble) bubble.textContent = "";
                     } else if (event === "result" && payload.html) {
                         clearLiveBubble();
-                        if (chat) chat.insertAdjacentHTML("beforeend", payload.html);
+                        if (chat) {
+                            chat.insertAdjacentHTML("beforeend", payload.html);
+                            bindDataQ(chat);
+                        }
                         window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
                     } else if (event === "end") {
                         /* stream complete */
