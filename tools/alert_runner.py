@@ -415,12 +415,16 @@ class Runner:
                     continue
                 known = monitor.name in self.state
                 if outcome.triggered and (self.repeat or not known):
-                    self.deliver(monitor, outcome)
-                    self.state.add(monitor.name)
+                    # Only advance state when the alert was actually delivered.
+                    # A failed post must be retried on the next cycle.
+                    if self.deliver(monitor, outcome):
+                        self.state.add(monitor.name)
                 elif not outcome.triggered and known:
-                    self.state.discard(monitor.name)
                     if self.notify_recovery:
-                        self.deliver(monitor, outcome, resolved=True)
+                        if self.deliver(monitor, outcome, resolved=True):
+                            self.state.discard(monitor.name)
+                    else:
+                        self.state.discard(monitor.name)
                 elif outcome.triggered and known:
                     print(f"[hold] {monitor.name}: still triggered ({outcome.threshold_note})")
                 self.save_state()

@@ -1,5 +1,6 @@
 """Offline tests for the alert-runner companion worker (tools/alert_runner.py)."""
 import json
+import urllib.error
 from datetime import datetime
 
 import pandas as pd
@@ -273,6 +274,68 @@ def test_save_state_preserves_filtered_monitors(tmp_path):
     payload = json.loads(state.read_text(encoding="utf-8"))
     assert payload["monitors"]["other"]["triggered"] is True
     assert payload["monitors"]["current"]["triggered"] is False
+
+
+def test_failed_webhook_post_is_retried_and_does_not_advance_state(
+    data_dir, tmp_path
+):
+    monitor = Monitor.from_dict(_export_monitor())
+    state = tmp_path / "alert_state.json"
+    attempts: list[dict] = []
+
+    def _fail(url, payload):
+        attempts.append(payload)
+        raise urllib.error.URLError("webhook down")
+
+    runner = Runner(
+        monitors=[monitor],
+        datasets=load_datasets(data_dir),
+        webhook_url="https://example.invalid/hook",
+        state_path=state,
+    )
+    runner.post = _fail
+
+    runner.cycle()
+    assert runner.posted == 0
+    assert monitor.name not in runner.state
+    payload = json.loads(state.read_text(encoding="utf-8"))
+    assert payload["monitors"][monitor.name]["triggered"] is False
+
+    runner.cycle()
+    assert len(attempts) == 2
+    assert monitor.name not in runner.state
+
+
+def test_failed_recovery_post_keeps_state_for_retry(data_dir, tmp_path):
+    monitor = Monitor.from_dict({
+        "name": "still_healthy",
+        "query": "SELECT sum(revenue) AS total FROM sales",
+        "threshold": {"metric_column": "total", "op": ">", "value": 99999},
+    })
+    state = tmp_path / "alert_state.json"
+    attempts: list[dict] = []
+
+    def _fail(url, payload):
+        attempts.append(payload)
+        raise urllib.error.URLError("webhook down")
+
+    runner = Runner(
+        monitors=[monitor],
+        datasets=load_datasets(data_dir),
+        notify_recovery=True,
+        webhook_url="https://example.invalid/hook",
+        state_path=state,
+    )
+    runner.post = _fail
+    runner.state.add(monitor.name)
+
+    runner.cycle()
+    assert monitor.name in runner.state
+    assert runner.posted == 0
+
+    runner.cycle()
+    assert len(attempts) == 2
+    assert monitor.name in runner.state
 
 
 def test_webhook_post_receives_slack_payload(data_dir, monkeypatch):
