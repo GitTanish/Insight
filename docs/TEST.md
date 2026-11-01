@@ -209,7 +209,7 @@ To verify whether Insight is *actually correct* rather than merely returning pla
 
 ### Offline Unit & Integration Test Suite (`tests/`)
 
-The repository contains **47 tracked test modules** (`git ls-files "tests/test_*.py"`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 - **never** an absolute test count (see Documentation Discrepancies).
+The repository contains **48 tracked test modules** (`git ls-files "tests/test_*.py"`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 - **never** an absolute test count (see Documentation Discrepancies).
 
 | Test File | What It Actually Exercises | Weaknesses / False-Confidence Risks |
 |---|---|---|
@@ -259,6 +259,7 @@ The repository contains **47 tracked test modules** (`git ls-files "tests/test_*
 | `test_evaluation.py` | Scoring logic (`_numeric_close`, `_ops_satisfied`) | Tests harness itself, not agent performance. Needs `evaluation/data/`, which is gitignored - CI regenerates it. |
 | `test_bench_harness.py` | Adversarial benchmark schema: deterministic fixtures, clean controls, mutation application, JSONL writing | Fast harness checks only; detection curves come from `evaluation/bench/run_all.py`. |
 | `test_durability_harness.py` | Durability evidence schema: all D-01..D-08 claims exercised with a reduced workload, known-boundary records retained, process settings restored, and the generated report keeps the limitations visible | Reduced concurrency (2 writers x 3 records); the full run is `evaluation/bench/run_durability.py`. |
+| `test_load_soak_harness.py` | Load/soak evidence schema: concurrent executor determinism, real local uvicorn uploads, a short sustained soak with RSS sampling, cache churn bounds, settings restoration, and report limitations | Tiny workload (2 uploads, 1-second soak, 2 fixtures); the full run is `evaluation/bench/run_load_soak.py`. |
 
 ---
 
@@ -308,6 +309,17 @@ Claim → check matrix for the agentic layer. **A claim without a check below is
 | Live SSE tool trail | `test_webapp_agentic.py` (SSE frames asserted) | 2026-10-17 live smoke (`tools/sse_smoke.py`): tool_call → tool_result in order, 32 streamed delta chunks, result cites "West", no error frame | **PROVEN live** |
 
 **Mutation sampling** (`tools/mutate.py`; mutmut is WSL-only, this is the curated substitute): 23 single-site mutations targeting `loop.py` invariants, the wire parser (incl. the harmony-token sanitizer), reasoning-effort stripping, the truncation hint, the HITL guard, verifier recomputation and schema checks, final-validator gates, grounding, and executor failure propagation - **23/23 killed** by the offline suite. Two rounds found real test gaps. The first survived 1/7: nothing tested that `filter_rows` narrows the implicit working frame; the gap was closed with `test_filter_rows_narrows_working_frame_for_later_calls`. The trust-core round survived 1/5: the verifier's top-N output-schema check was only exercised by a value tamper, not by a dropped projected column; the gap was closed with `test_top_n_dropped_projected_column_is_detected`. Sampled, not exhaustive - do not present this as a mutation score.
+
+### Load, concurrency, and soak benchmark (`evaluation/bench/`, 2026-11-01)
+
+`evaluation/bench/run_load_soak.py --quick|--full` covers four load surfaces: concurrent executions of the deterministic analysis fixture matrix compared against serial result signatures; concurrent HTTP uploads against a real local single-worker uvicorn process; a bounded-duration upload soak with periodic process-tree RSS sampling; and concurrent result-cache writes/reads under a small size budget. It writes JSONL trials, a summary, and a manifest with SHA-256 hashes, then regenerates `LOAD_SOAK.md`. The HTTP path is upload -> parse -> profile -> deterministic briefing; it does not call an LLM. Rate limiting and model discovery are disabled in the child server. The harness restores the process settings it mutates and removes its work directory; the app does not import this tooling. CI runs the reduced harness test (`test_load_soak_harness.py`), not the full evidence run.
+
+```powershell
+.venv\Scripts\python.exe evaluation\bench\run_load_soak.py --quick
+.venv\Scripts\python.exe evaluation\bench\run_load_soak.py --full
+```
+
+Load numbers are wall-clock observations from synthetic fixtures on the host under test, not an SLO or capacity claim. RSS is a process working-set sample, not a leak proof; the soak is deliberately bounded in duration. Raw records stay under `.artifacts/bench/load-soak/<run_id>/` (gitignored); `LOAD_SOAK.md` is the generated human-readable view.
 
 **Branch coverage** (`coverage run --branch` over the agentic + provider test selection): `insight/tools/loop.py` **96%** branch; `insight/tools/` between 75% and 100% (scoped total 81%). Remaining `openai_compat.py` misses are the SSE stream parser, `list_models` discovery and retry-sleep branches - pre-existing non-agentic paths; the wire-format functions are fully covered.
 
@@ -494,6 +506,10 @@ python -m coverage report -m
 # Durability / fault-injection evidence (writes DURABILITY.md)
 python evaluation/bench/run_durability.py --quick
 python evaluation/bench/run_durability.py --full
+
+# Load / concurrency / soak evidence (writes LOAD_SOAK.md; local server only)
+python evaluation/bench/run_load_soak.py --quick
+python evaluation/bench/run_load_soak.py --full
 
 # Live SSE smoke (start the app first: uvicorn webapp.app:app --port 8899)
 python tools/sse_smoke.py
