@@ -300,8 +300,11 @@ def render_load_soak_markdown(
     )
     lines.append(
         "- `store_cached_response` sweeps before publishing, so the cache may "
-        "briefly hold the budget plus the payload being written. The trial "
-        "records the size after the last write and after an explicit sweep."
+        "briefly hold the budget plus the payload being written. On Windows a "
+        "reader can also hold a file open long enough to refuse an eviction; "
+        "failed deletes are not counted, and a later sweep retries them. The "
+        "trial records the size after the last write and after an explicit "
+        "sweep."
     )
     lines.append("")
 

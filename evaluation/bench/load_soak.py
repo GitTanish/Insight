@@ -1099,7 +1099,8 @@ def run_load_soak(
         _claim_summary(
             records,
             "L-04",
-            "Result-cache churn stays within its size budget without corrupt reads.",
+            "Result-cache churn respects its size budget after sweeping and "
+            "never serves corrupt reads.",
             (
                 f"{config.cache_writes} writes, {config.cache_readers} readers, "
                 f"{config.cache_max_mb} MB budget"

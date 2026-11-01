@@ -191,6 +191,35 @@ def test_sweep_cache_enforces_size_budget(tmp_path, monkeypatch):
     assert newer.exists()
 
 
+def test_sweep_cache_does_not_count_failed_deletes(tmp_path, monkeypatch):
+    import os
+    import time as _time
+
+    older = tmp_path / "cache" / "aaaa"
+    newer = tmp_path / "cache" / "bbbb"
+    for key in (older, newer):
+        key.mkdir(parents=True)
+        (key / "blob.bin").write_bytes(b"x" * 700_000)
+
+    now = _time.time()
+    os.utime(older, (now - 120, now - 120))
+    os.utime(newer, (now - 60, now - 60))
+
+    class _SizeSettings(_FakeSettings):
+        def __init__(self):
+            super().__init__(tmp_path)
+            self.query_cache_ttl_days = 3650
+            self.query_cache_max_mb = 1
+
+    monkeypatch.setattr("insight.cache.get_settings", lambda: _SizeSettings())
+    monkeypatch.setattr(result_cache, "_remove", lambda path: False)
+
+    removed = result_cache.sweep_cache()
+
+    assert removed == 0
+    assert older.exists() and newer.exists()
+
+
 def test_store_runs_sweep_before_write(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr("insight.cache.sweep_cache", lambda: calls.append(1) or 0)
