@@ -362,6 +362,8 @@ def test_isotonic_calibration_detects_miscalibration():
     assert labels["brier_calibrated"] <= labels["brier_raw"] + 1e-6
     assert labels["ece"] > 0.02
     assert "over-confident" in labels["interpretation"]
+    assert "in-sample" in labels["interpretation"]
+    assert "in-sample" in (out.notes or "")
     rates = [float(v) for v in table["observed_rate"]]
     rho = pd.Series(table["avg_score"]).corr(pd.Series(rates), method="spearman")
     assert rho > 0.95

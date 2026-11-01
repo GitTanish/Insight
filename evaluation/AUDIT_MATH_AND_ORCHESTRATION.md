@@ -100,7 +100,7 @@ result → SSE stream (stages) → DOCX / dbt / alert exports
    re-derived. Accepted trade-off; could add `EXPLAIN`-based plan checks.
 2. Narrative-level claim verification (does the sentence match the number?) is
    not automated; grounding covers numbers only.
-3. MAR/MNAR detection is a caveat, not a diagnostic (see `future_scope.md`).
+3. MAR/MNAR detection is a caveat, not a diagnostic (see `../docs/future_scope.md`).
 
 ---
 

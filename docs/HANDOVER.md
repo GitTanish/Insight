@@ -1,7 +1,7 @@
-# INSIGHT — Session Handover
+# INSIGHT - Session Handover
 
-> Last updated: 2026-10-23 · Engine v2.3.0 · **offline suite green** · **20/20 live eval cases** · **MCP server + verification toolkit (smoke-verified on real data)** · **production-hardening pass (auth, limits, telemetry, retention, CI scanning)** · Python 3.11 venv at `.venv`
-> Branch note: agentic tool-use mode + alert runner are on `main` (merge `29dcc19`); `feat/agentic-tool-use` carries the subsequent live-verification/hardening pass (providers, eval infra, wire-level fixes, verification docs) as an open PR.
+> Last updated: 2026-10-29 · Engine v2.3.0 · **offline suite green** · **20/20 live eval cases** · **MCP server + verification toolkit (smoke-verified on real data)** · **production-hardening pass (auth, limits, telemetry, retention, CI scanning)** · Python 3.11 venv at `.venv`
+> Branch note: `main` is protected and requires a PR. Work happens on short-lived branches; there are no long-lived feature branches.
 
 ---
 
@@ -13,7 +13,7 @@ Core principle: **the LLM never executes code and never invents numbers.**
 ```
 Upload → Profiler + Zero-Prompt Briefing (top-3 findings, no question needed)
       → Planner (LLM) emits a JSON AnalysisPlan → schema/column validated → bounded repair
-        (or, in agent mode: tool-calling loop — ops as tools, bounded, observes each result)
+        (or, in agent mode: tool-calling loop - ops as tools, bounded, observes each result)
       → [optional human gate: editable plan, Approve & run]
       → Deterministic engine executes 15 ops (chained via input_step DAG)
       → Statistical router runs scipy tests by column types (t-test / Mann-Whitney / chi²+Cramér's V)
@@ -22,7 +22,7 @@ Upload → Profiler + Zero-Prompt Briefing (top-3 findings, no question needed)
       → SSE to UI · DOCX report incl. briefing findings · optional LangSmith trace
 ```
 
-Both front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `webapp/`) and **Streamlit** (`main.py`, maintained).
+Both front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `webapp/`) and **Streamlit** (`legacy_streamlit/main.py`, maintained).
 
 ---
 
@@ -34,22 +34,23 @@ Both front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `web
 | `insight/llm/` | `base.py` ABC; `providers/openai_compat.py` (retry/backoff/429-aware) + groq/mistral/openai/ollama/openrouter/anthropic; `registry.py`: curated catalog + live discovery + capability flags + fallback chain + custom env provider |
 | `insight/profiling/profiler.py` | role inference (identifier-by-name heuristic!), missingness, fingerprint |
 | `insight/planning/` | `prompts.py` (hard rules incl. title/DAG/binary rules), `planner.py` (JSON repair loop) |
-| `insight/analytics/operations.py` | **the op registry** — 15 deterministic ops + `operation_catalog()` (auto-generates planner prompt) + `validate_plan_columns()` |
-| `insight/tools/` | **agentic tool-use layer** — `tooling.py` (registry→provider tool schemas), `runtime.py` (dispatch through the executor path), `loop.py` (bounded observe/plan/act/refine), `pipeline.py` (plan/execution rebuild + chart synthesis + meta). Gated by `INSIGHT_AGENTIC` / `AnalysisRequest.agentic` |
+| `insight/analytics/operations.py` | **the op registry** - 15 deterministic ops + `operation_catalog()` (auto-generates planner prompt) + `validate_plan_columns()` |
+| `insight/tools/` | **agentic tool-use layer** - `tooling.py` (registry→provider tool schemas), `runtime.py` (dispatch through the executor path), `loop.py` (bounded observe/plan/act/refine), `pipeline.py` (plan/execution rebuild + chart synthesis + meta). Gated by `INSIGHT_AGENTIC` / `AnalysisRequest.agentic` |
 | `insight/analytics/statistics.py` | scipy routing: group comparison / chi-square / correlation, effect sizes, plain-language interpretation |
 | `insight/briefing.py` | zero-prompt detectors: trend/corr/outliers/imbalance/missing/dupes → ranked findings |
 | `insight/execution/executor.py` | sequential executor; `frames` dict enables `input_step` DAG; filter_rows mutates implicit chain |
 | `insight/validation/` | `result_validator.py` (sanity/small-sample/chart-consistency) + `verification.py` (**independent recomputation**) |
 | `insight/ingest.py` | shared CSV/Excel parsing (delimiter sniffing, encodings, row caps) used by the webapp and the toolkit |
-| `insight/toolkit.py` | **agent-facing engine API** — load tables, run ops/plans/sandboxed SQL, `verify_claims`; records runs for grounding + independent recomputation. No LLM |
+| `insight/toolkit.py` | **agent-facing engine API** - load tables, run ops/plans/sandboxed SQL, `verify_claims`; records runs for grounding + independent recomputation. No LLM |
 | `insight/mcp_server.py` | MCP wrapper over the toolkit (`python -m insight.mcp_server`; stdio / sse / streamable-http) |
 | `insight/visualization/` | `themes.py` (editorial/minimal/dark) + `renderer.py` (ChartSpec→PNG; adaptive bins live in distribution op; Other-bucket, horizontal-bar, tick formatting here) |
 | `insight/orchestrator.py` | `analyze_stream()` async generator (stage / delta / plan_review events) wrapped by `analyze()`; `run_analysis_sync()` for sync UIs. Owns cache, timing meta (`planning_ms`, `repair_ms`, `first_token_ms`, …) and the HITL gate |
-| `insight/observability.py` | LangSmith tracing (optional; `INSIGHT_TRACING=off` kills it) — root run + `trace_phase` spans |
+| `insight/observability.py` | LangSmith tracing (optional; `INSIGHT_TRACING=off` kills it) - root run + `trace_phase` spans |
 | `insight/settings.py` | all config via env; `.env` auto-loaded |
 | `webapp/` | FastAPI: `app.py` routes, `sessions.py` cookie store, `services.py` thin webapp IO (delegates parsing to `insight/ingest.py`), Jinja `templates/`, `static/` (CSS + app.js SSE client w/ typing bubble + plan review + live agent tool trail) |
-| `ui_components.py` / `utils.py` / `main.py` | Streamlit legacy UI (same engine via cached wrappers) |
-| `tests/` | Offline suite, green in CI (fake providers / scripted chains). Key fixtures in `conftest.py`. Pass/skip split varies by platform and by which optional corpora are present — assert exit code, not count |
+| `legacy_streamlit/` | Streamlit legacy UI (same engine via cached wrappers) |
+| `tests/` | Offline suite, green in CI (fake providers / scripted chains). Key fixtures in `conftest.py`. Pass/skip split varies by platform and by which optional corpora are present - assert exit code, not count |
+| `docs/` | Runbook (`HOW_TO_RUN.md`), handover, test manual, and forward plans |
 
 ---
 
@@ -62,9 +63,9 @@ Both front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `web
 uvicorn webapp.app:app --port 8000        # → http://localhost:8000
 
 # legacy UI
-streamlit run main.py                      # → :8501
+streamlit run legacy_streamlit/main.py     # → :8501
 
-# tests (no network / no keys needed — tracing force-off in conftest)
+# tests (no network / no keys needed - tracing force-off in conftest)
 pytest -q                                  # expect exit 0 (~30-70s on Windows)
 
 # headless API
@@ -72,10 +73,10 @@ curl -X POST localhost:8000/api/query -H "Content-Type: application/json" \
      -d '{"question":"Which region has the highest revenue?"}'
 
 # toolkit + MCP smoke on real public data (manual, not CI; first run downloads 4 CSVs
-# into data/ — needs evaluation/data/, generated once via evaluation/generate_datasets.py)
+# into data/ - needs evaluation/data/, generated once via evaluation/generate_datasets.py)
 python tools/smoke_toolkit.py               # 54 checks: 15 ops + SQL sandbox + DAG + verify_claims + MCP
 
-# production ops (see PRODUCTION_READINESS.md)
+# production ops (see ../PRODUCTION_READINESS.md)
 python tools/retention.py --days 14 --dry-run   # artifact retention preview
 python tools/load_test.py --count 20 --workers 8  # upload-path load smoke (no LLM)
 python tools/load_test.py --query --question "Which region leads revenue?" --count 8
@@ -97,74 +98,74 @@ Optional: MISTRAL/OPENAI/ANTHROPIC/OPENROUTER keys, `OLLAMA_BASE_URL`,
 - Webapp E2E smoke: upload → briefing on page → SSE stages → result HTML → history persist → DOCX(83 KB, w/ findings) → JSON API → clear
 - Editorial charts render correctly (paper #f2ead8 / ink / accent red, serif)
 - LangSmith hierarchy: `insight.analyze` → `planning.plan` → `provider.generate`
-- Agentic pinned A/B on NVIDIA NIM gpt-oss-20b (k=3, `--no-fallback`): measured 58/60 (96.7%, 95% CI 88.6–99.1) vs single-shot 43/60 (71.7%, 59.2–81.5) — but the 2026-10-17 follow-up showed **most of that gap was a provider-side truncation bug that only hit the single-shot planner** (see TEST.md "What failed" #3); post-fix k=1 confirmations: 20/20 agentic vs 19/20 single-shot — **accuracy parity on this endpoint; the agentic edge is auditability + tool trail**. Raw numbers: TEST.md "Verification evidence"
-- Toolkit + MCP server smoke-verified on real data (`tools/smoke_toolkit.py`, 2026-10-20): 54/54 checks across superstore / penguins / telco / temps + the generated corpora vs independent pandas/numpy/scipy and `ground_truth.json` (Brier 0.17746 / ECE 0.0613), including the MCP in-memory client flow; the pass caught + fixed a double-bracket `filters` shape hint in the auto-catalog and a `SettingWithCopyWarning` on ops mutating filtered frames (pinned by 3 new `test_operations.py` tests)
+- Agentic pinned A/B on NVIDIA NIM gpt-oss-20b (k=3, `--no-fallback`): measured 58/60 (96.7%, 95% CI 88.6–99.1) vs single-shot 43/60 (71.7%, 59.2–81.5) - but the 2026-10-17 follow-up showed **most of that gap was a provider-side truncation bug that only hit the single-shot planner** (see TEST.md "What failed" #3); post-fix k=1 confirmations: 20/20 agentic vs 19/20 single-shot - **accuracy parity on this endpoint; the agentic edge is auditability + tool trail**. Raw numbers: TEST.md "Verification evidence"
+- Toolkit + MCP server smoke-verified on real data (`tools/smoke_toolkit.py`, 2026-10-20): 54/54 checks across superstore / penguins / telco / temps + the generated corpora vs independent pandas/numpy/scipy and `ground_truth.json` (in-sample raw Brier 0.17746 / ECE 0.0613), including the MCP in-memory client flow; the pass caught + fixed a double-bracket `filters` shape hint in the auto-catalog and a `SettingWithCopyWarning` on ops mutating filtered frames (pinned by 3 new `test_operations.py` tests)
 
 ---
 
 ## 5. Known quirks / gotchas
 
-1. **Windows console cp1252** chokes printing unicode (`…`, `\u202f`) — scripts need `sys.stdout.reconfigure(encoding="utf-8")`; the *library* is fine.
-2. **PowerShell heredocs add BOM** with `-Encoding UTF8` on PS5.1 — after Set-Content edits, strip BOM or read as utf-8-sig when parsing.
+1. **Windows console cp1252** chokes printing unicode (`…`, `\u202f`) - scripts need `sys.stdout.reconfigure(encoding="utf-8")`; the *library* is fine.
+2. **PowerShell heredocs add BOM** with `-Encoding UTF8` on PS5.1 - after Set-Content edits, strip BOM or read as utf-8-sig when parsing.
 3. **sse framing**: webapp hand-formats SSE (`event:\ndata:\n\n`, LF). Client normalizes CRLF and skips `:` comments anyway.
-4. **uvicorn cold start ~8-12 s** (scipy+langsmith imports) — not hung.
-5. **`st.cache_data` wrappers** in `utils.py` are Streamlit-only; core logic duplicated cleanly in `webapp/services.py` (keep both in sync when changing CSV parsing).
-6. **Tracing in tests**: conftest sets `INSIGHT_TRACING=off` BEFORE insight imports — preserve that line's position.
+4. **uvicorn cold start ~8-12 s** (scipy+langsmith imports) - not hung.
+5. **`st.cache_data` wrappers** in `legacy_streamlit/utils.py` are Streamlit-only; core logic duplicated cleanly in `webapp/services.py` (keep both in sync when changing CSV parsing).
+6. **Tracing in tests**: conftest sets `INSIGHT_TRACING=off` BEFORE insight imports - preserve that line's position.
 7. **Discovery cap**: `discovery_max_per_provider=40`; OpenRouter ranking = preferred vendors then shortest-name-first; variants (`:batch`) deduped.
 8. **Planner quirk**: small models may set `top_n=1` (charts suffer but numbers stay correct); ChartSpec treats explicit `null` as "use default" (`resolved_top_n/resolved_sort_desc`).
 9. **Artifacts**: plots under `.artifacts/web/<data_id>/` (webapp) vs `.artifacts/<session_id>/` (streamlit). Both gitignored.
 10. **PowerShell env pinning is a trap**: `$env:FOO=''` *removes* the variable; dotenv then refills it from `.env`. That's why live A/B runs use `--no-fallback` (chain pinned in `build_llm_chain`) rather than blanking keys.
-11. **Model-name collision**: Groq and NIM both serve a model literally named `openai/gpt-oss-20b`, so `models_used` alone cannot prove which provider served a run — pin with `--no-fallback` when it matters.
+11. **Model-name collision**: Groq and NIM both serve a model literally named `openai/gpt-oss-20b`, so `models_used` alone cannot prove which provider served a run - pin with `--no-fallback` when it matters.
 12. **Quota backoff shape differs**: NIM throttles in bursts (220–330 s single-case walls observed unpinned); Groq's free tier stretches every case (~178 s/case) via internal retry backoff, which leaves `throttled=0` even when the run is quota-bound.
-13. **Reasoning-capable models need their capability flag declared**: NIM `gpt-oss-20b` without `supports_reasoning_effort` silently loses the configured `reasoning_effort="low"`; it then burns the whole `max_tokens` budget in the reasoning channel and returns `finish_reason=length` with empty content. Fixed 2026-10-17 (registry flag + `hit max_tokens=N` hint in the empty-content error) — when curating *new* NIM/reasoning models, set the flag deliberately.
-14. **The public superstore / telco CSV copies are polluted (2026-10-20)**: `leonism/sample-superstore` concatenates unrelated sample tables after the real 9,994 rows of `data/superstore.csv` (a People/Region block, then Returns) — slice to the first block (`iloc[:9994]`) for any manual use, as `tools/smoke_toolkit.py` does. The `KimathiNewton/Telco-Customer-Churn` copy stores `SeniorCitizen` as `False/True/0/1` strings and blanks in `TotalCharges`; the ops' numeric coercion handles it, but pandas `== 1` comparisons silently match nothing.
-15. **Middleware order is load-bearing (2026-10-20)**: the last middleware added is the outermost. `webapp/app.py` adds RateLimit → Auth → SecurityHeaders → Telemetry → GZip in that order, so telemetry sees the final status (including 401/429) and auth runs before routing. Tests force `INSIGHT_RATE_LIMIT=off` in `conftest.py`, so the main app never throttles under test — exercise limits on minimal apps with an injected fake-clock limiter.
+13. **Reasoning-capable models need their capability flag declared**: NIM `gpt-oss-20b` without `supports_reasoning_effort` silently loses the configured `reasoning_effort="low"`; it then burns the whole `max_tokens` budget in the reasoning channel and returns `finish_reason=length` with empty content. Fixed 2026-10-17 (registry flag + `hit max_tokens=N` hint in the empty-content error) - when curating *new* NIM/reasoning models, set the flag deliberately.
+14. **The public superstore / telco CSV copies are polluted (2026-10-20)**: `leonism/sample-superstore` concatenates unrelated sample tables after the real 9,994 rows of `data/superstore.csv` (a People/Region block, then Returns) - slice to the first block (`iloc[:9994]`) for any manual use, as `tools/smoke_toolkit.py` does. The `KimathiNewton/Telco-Customer-Churn` copy stores `SeniorCitizen` as `False/True/0/1` strings and blanks in `TotalCharges`; the ops' numeric coercion handles it, but pandas `== 1` comparisons silently match nothing.
+15. **Middleware order is load-bearing (2026-10-20)**: the last middleware added is the outermost. `webapp/app.py` adds RateLimit → Auth → SecurityHeaders → Telemetry → GZip in that order, so telemetry sees the final status (including 401/429) and auth runs before routing. Tests force `INSIGHT_RATE_LIMIT=off` in `conftest.py`, so the main app never throttles under test - exercise limits on minimal apps with an injected fake-clock limiter.
 16. **MCP HTTP transports require auth (2026-10-20)**: `sse` / `streamable-http` refuse to start without `INSIGHT_MCP_AUTH_TOKEN` (override only deliberately with `INSIGHT_MCP_ALLOW_UNAUTHENTICATED=1`). `load_table(path=...)` defaults to the CWD as its only file root; `INSIGHT_MCP_FILE_ROOTS=all` is unrestricted and `none` disables path loading entirely.
 
 ---
 
-## 6. Remaining work — build queue (priority order)
+## 6. Remaining work - build queue (priority order)
 
 > **Status 2026-10-23:** P1–P11 below are DONE (P8 verified by the pinned live
 > A/B, P9 by the real-data smoke, P10 by the offline suite + `pip-audit`, P11 by
 > the offline hardening suite - see TEST.md "Verification evidence" and
 > "Toolkit + MCP real-data smoke"). The remaining production gap is external
-> session state for multi-worker (C9 in `PRODUCTION_READINESS.md`); see
+> session state for multi-worker (C9 in `../PRODUCTION_READINESS.md`); see
 > `future_scope.md` for product work.
 
-### P1 — Evaluation harness ✅
+### P1 - Evaluation harness
 `evaluation/generate_datasets.py` (seeded: sales/ecommerce/support + retail_250k;
 diamonds.csv fetched separately) · `evaluation/cases.json` (20 cases w/ ground truth)
 · `evaluation/run_eval.py` (ops superset + substrings + numeric ±tol scoring,
 markdown report). pytest `eval` marker gated by `INSIGHT_RUN_EVAL=1`.
 Live results: 20/20 (gpt-oss-120b 3/3 smoke; mistral-small 12/15 pre-fixes → fixed).
 
-### P2 — Statistics depth ✅
+### P2 - Statistics depth
 `anova_test` (F + η²), `regression` (OLS lstsq, t p-values, R², std betas,
 listwise-drop reporting), compare_subsets 95% CIs (n≥30 gate). Router: cat>2×num → ANOVA;
 binary-num × categorical → chi-square (fixed swapped-args bug found by eval).
 `isotonic_calibration` (PAV, reliability table, Brier/ECE) added on top.
 
-### P3 — Conversation state machine ✅
+### P3 - Conversation state machine
 `insight/conversation/state.py`; orchestrator `state=` param end-to-end; planner gets
 serialized context; webapp + streamlit persist `analysis_state`; cache key includes it.
 
-### P4 — Packaging ✅
+### P4 - Packaging
 `Dockerfile` (non-root, single-worker note) · `.dockerignore` · `ruff.toml` +
 `.github/workflows/ci.yml` (ruff+pytest, tracing off) · query cache in `insight/cache.py`
 (TTL 14d / 512MB budget eviction; `INSIGHT_QUERY_CACHE*` envs; valid-results only).
 
-### P5 — Smaller polish ✅
+### P5 - Smaller polish
 Webapp `POST /models/refresh` + rail button · DOCX consolidated to `insight/reports/docx.py`
 (both UIs delegate) · briefing LLM polish behind `INSIGHT_BRIEFING_LLM_POLISH` (default off)
 · validator now emits MCAR caveats for referenced columns >5% missing · group_aggregate
 reports `excluded_missing_<metric>` for mixed count bases.
 
-### P6 — DuckDB relational analytics + artifact exports ✅
+### P6 - DuckDB relational analytics + artifact exports
 `insight/analytics/sql_engine.py` (`DuckSession`: in-memory con, frames registered then
 `enable_external_access=false` + `lock_configuration=true`, SELECT/WITH-only keyword
 guards, chained-statement block, interrupt watchdog `INSIGHT_SQL_TIMEOUT_S=10`,
-row cap). Op 15/15: `sql_query` — joins/windows/pivots; errors feed the existing
+row cap). Op 15/15: `sql_query` - joins/windows/pivots; errors feed the existing
 plan-repair loop. Multi-file upload (`files[]`, up to 6) → per-session tables;
 planner gets exact table schemas via `DuckSession.describe()`. Exports:
 `POST /export/dbt` (zip: model.sql + schema.yml w/ not_null tests) and
@@ -172,7 +173,7 @@ planner gets exact table schemas via `DuckSession.describe()`. Exports:
 answers. Tests: `test_sql_engine.py` (16), `test_sql_webapp.py` (2),
 `test_artifacts.py` (2). Sandbox code-interpreter explicitly skipped by owner.
 
-### P7 — Latency work (streaming, caching, plan approval) ✅
+### P7 - Latency work (streaming, caching, plan approval)
 **Text streaming**: `LLMProvider.stream()` default + real SSE parser in
 `openai_compat.py` (yields `choices[].delta.content`, falls back to non-streaming
 on endpoint rejection). `_Chain.stream()` will not splice two providers mid-answer.
@@ -193,7 +194,7 @@ requests are excluded from cache read AND write.
 
 **Timing telemetry**: `planning_ms`, `repair_ms`, `repair_attempts`,
 `repair_issues`, `charts_ms`, `grounding_retry_ms`, `first_token_ms`,
-`explaining_ms` — a repair loop was previously invisible (31s unaccounted).
+`explaining_ms` - a repair loop was previously invisible (31s unaccounted).
 `repair_issues` initially landed in the LangSmith span block instead of the
 response meta; watch for that class of mistake.
 
@@ -207,12 +208,12 @@ re-validates via `validate_plan_columns` rather than trusting the edit.
 `analyze()` raises on `plan_only` (it can't express a plan-only outcome).
 `/api/query` drives `analyze_stream` internally for this.
 
-**Non-decision — native engine (C++/Rust/Go) was measured and rejected**:
+**Non-decision - native engine (C++/Rust/Go) was measured and rejected**:
 execution is 14-62ms of a ~30s query (~0.2%), even on 250K rows. A native
 rewrite would save ~55ms. The LLM calls are 95%+ of latency. Documented in
 `future_scope.md` so it isn't re-litigated.
 
-### P8 — Agentic tool-use mode + alert-runner ✅
+### P8 - Agentic tool-use mode + alert-runner
 **Agentic mode** (`INSIGHT_AGENTIC` / per-question toggle in both UIs): the LLM
 calls ops *as tools*, observes real results, iterates. `insight/tools/`:
 `tooling` (op params → provider tool schemas, `$defs` inlined, Anthropic +
@@ -225,7 +226,7 @@ for SSE), `pipeline` (rebuilds `AnalysisPlan`+`ExecutionResult` from the loop
 so the **same** tail runs: validate → independent recompute → charts →
 explainer → grounding). Anthropic provider now speaks tool_use/tool_result.
 `_Chain.generate` tolerates tool-call-only (empty-content) responses.
-Orchestrator: the shared tail was extracted to `_tail_events` — both modes
+Orchestrator: the shared tail was extracted to `_tail_events` - both modes
 call it; agentic skips the plan-repair loop (the loop *is* the repair).
 Streams `tool_call`/`tool_result` SSE events; `app.js` renders a live trail.
 Cache key includes the mode. Tests: `test_agentic_pipeline.py` (20),
@@ -246,9 +247,9 @@ fixture (`tests/fixtures/agentic_replay_sales_top_region.json` →
 smoke `tools/sse_smoke.py` (tool_call → tool_result ordering, streamed deltas).
 Details: TEST.md "Verification evidence".
 
-**Gotchas**: (1) the SSE drain must `yield await queue.get()` — yielding the
+**Gotchas**: (1) the SSE drain must `yield await queue.get()` - yielding the
 bare coroutine never drains the queue and spins the generator forever.
-(2) Stub chains in tests lack `.entries` — the tool-shape check uses
+(2) Stub chains in tests lack `.entries` - the tool-shape check uses
 `getattr`. (3) `_FakeSettings` in `test_cache.py` needs an `agentic` field.
 (4) Plan approval takes precedence over agentic mode: `plan_only` /
 `INSIGHT_PLAN_APPROVAL` forces the single-shot planner, because the gate needs
@@ -262,8 +263,8 @@ State-change alerting (post on trigger edge, `--notify-recovery`,
 `--webhook` override, URL from the monitor's `webhook.url_env`. Stdlib-only.
 Tests: `test_alert_runner.py` (11).
 
-### P9 — MCP server + agent verification toolkit ✅
-`insight/toolkit.py`: agent-facing engine API (no LLM) — load tables (CSV/Excel
+### P9 - MCP server + agent verification toolkit
+`insight/toolkit.py`: agent-facing engine API (no LLM) - load tables (CSV/Excel
 via shared `insight/ingest.py`), run ops / DAG plans / sandboxed SQL, and
 `verify_claims` (number grounding in prose + independent recomputation); every
 run recorded so evidence can be replayed and tamper-checked.
@@ -272,7 +273,7 @@ list_tables, profile_table, execute_operation, run_plan, run_sql, `verify_claims
 `python -m insight.mcp_server`, stdio / sse / streamable-http via
 `INSIGHT_MCP_*` envs; `webapp/services.py` now a thin re-export of the shared
 parser. Tests: `test_toolkit.py` (25) + `test_mcp_server.py` (7, in-memory
-client). **Verification (2026-10-20)**: `tools/smoke_toolkit.py` — 54/54 checks
+client). **Verification (2026-10-20)**: `tools/smoke_toolkit.py` - 54/54 checks
 on four public datasets + the generated corpora across all 15 ops, SQL sandbox
 rejections, DAG chaining, verification gates and an MCP end-to-end flow, each
 cross-checked against independent pandas/numpy/scipy results and
@@ -283,8 +284,8 @@ cross-checked against independent pandas/numpy/scipy results and
 filtered group ops) + 3 regression tests. Details: TEST.md "Toolkit + MCP
 real-data smoke".
 
-### P10 — Production hardening ✅
-`PRODUCTION_READINESS.md` is the gate (C1–C10, acceptance checks, non-goals).
+### P10 - Production hardening
+`../PRODUCTION_READINESS.md` is the gate (C1-C10, acceptance checks, non-goals).
 Shipped in this pass: optional auth gate (`INSIGHT_AUTH_TOKEN`, `/auth` bootstrap
 cookie, `INSIGHT_TRUST_PROXY_AUTH` identity, `Secure` cookies) + per-session
 artifact ownership in `webapp/security.py` / `webapp/app.py`; per-identity
@@ -299,9 +300,9 @@ host allowlist); CI dependency audit (`pip-audit`) + image build/Trivy jobs;
 `test_webapp_security.py`, `test_webapp_telemetry.py`, `test_sessions.py`,
 `test_retention.py` plus additions to `test_toolkit.py`, `test_mcp_server.py`,
 `test_chain_fallback.py`. **Not shipped:** external session store / multi-worker
-(C9) — in-memory sessions remain the documented single-worker constraint.
+(C9) - in-memory sessions remain the documented single-worker constraint.
 
-### P11 — Memory / connection / race hardening ✅
+### P11 - Memory / connection / race hardening
 Follow-up audit pass on the P10 surface. Shipped: session generation counters, state
 locks and per-session busy flags (`webapp/sessions.py`); atomic dataset replacement and
 stale-safe background polish; 409/redirect guards for concurrent query, upload and clear;
@@ -315,7 +316,7 @@ library calls. Regression tests in `tests/test_hardening.py` and
 `tests/test_profiler.py`.
 
 ### Explicitly deferred (per owner decision, do not start unprompted)
-Container/subprocess sandboxing (no codegen exists), multi-tenant RBAC/SSO, PDF export, dashboards, external session store (C9 — owner-deferred; requires a consistency model for DataFrames/responses).
+Container/subprocess sandboxing (no codegen exists), multi-tenant RBAC/SSO, PDF export, dashboards, external session store (C9 - owner-deferred; requires a consistency model for DataFrames/responses).
 
 ---
 
@@ -326,7 +327,7 @@ Container/subprocess sandboxing (no codegen exists), multi-tenant RBAC/SSO, PDF 
 - **New analytics op checklist**: params BaseModel w/ Field descriptions (auto-catalog) → register_operation decorator → `_COLUMN_REF_FIELDS` entry → validator `TABLE_PRODUCING_OPS` if it emits tables → tests in `test_operations.py` → done (prompt updates free).
 - **Test LLM calls** always through `stub_chain_factory` (conftest) monkeypatching `orch._build_chain_for`; never real network in CI.
 - **Windows shell**: prefer writing temp .py scripts over multiline `python -c`; use `[System.IO.File]::WriteAllText(..., UTF8Encoding($false))` to avoid BOM.
-- Keep `README.md`, `HOW_TO_RUN.md`, and this file honest when scope changes.
+- Keep `../README.md`, `HOW_TO_RUN.md`, and this file honest when scope changes.
 
 ---
 

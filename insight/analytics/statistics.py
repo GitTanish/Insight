@@ -149,15 +149,15 @@ def run_isotonic_calibration(
             f"below observed outcome rates on average."
         )
     interpretation = (
-        f"{verdict} Isotonic recalibration changes Brier score from "
+        f"{verdict} Isotonic recalibration changes in-sample Brier score from "
         f"{brier_raw:.4f} to {brier_calibrated:.4f} "
         f"({'+' if improvement >= 0 else ''}{improvement:.1%} relative)."
     )
     monotone_segments = int((np.diff(fitted_sorted) != 0).sum()) + 1
     notes = (
         f"n={n:,}, base rate={base_rate:.3f}, {len(reliability)} reliability bins, "
-        f"{monotone_segments} fitted level(s); assumes independent observations "
-        "and a binary outcome."
+        f"{monotone_segments} fitted level(s); PAV fit and Brier/ECE scored on the "
+        "same rows (in-sample); assumes independent observations and a binary outcome."
     )
     return CalibrationReport(
         n=n,

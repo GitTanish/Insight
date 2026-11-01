@@ -1,25 +1,25 @@
-# Production Readiness — Insight
+# Production Readiness - Insight
 
 This is the release gate for calling Insight **production-grade**. It is deliberately
-tailored to Insight's contract — deterministic computation plus LLM narration — not a
+tailored to Insight's contract - deterministic computation plus LLM narration - not a
 generic SaaS checklist. Each criterion has an objective acceptance check; the status
 column is evidence-backed and must be updated when behavior changes.
 
-Last updated: 2026-10-23 · Scope: webapp + MCP server + toolkit · Out of scope: model quality.
+Last updated: 2026-10-29 · Scope: webapp + MCP server + toolkit · Out of scope: model quality.
 
 Legend: **MET** = acceptance check passes and is covered by tests/docs · **PARTIAL** =
 implemented but an acceptance check is unproven or a documented gap remains · **OPEN** =
 not implemented.
 
-> Note on evidence: the offline suite and local `pip-audit` ran on 2026-10-23; the new CI
-> `security`/`docker` jobs land in the same commit, so their first hosted run is
-> the final confirmation for C8.
+> Note on evidence: the offline suite, local `pip-audit`, and the hosted CI
+> `test`/`security`/`docker` jobs passed on 2026-10-23. C8 remains **PARTIAL** because
+> there is no lockfile or SBOM/attestation yet.
 
 ## Status snapshot
 
 | # | Criterion | Status | Evidence |
 |---|---|---|---|
-| C1 | Numbers are deterministic, auditable and verified | **MET** | `TEST.md` verification matrix; `verify_claims` + toolkit run records; grounding on by default |
+| C1 | Numbers are deterministic, auditable and verified | **MET** | `docs/TEST.md` verification matrix; `verify_claims` + toolkit run records; grounding on by default |
 | C2 | Provider failures are contained | **PARTIAL** | retry/fallback/budgets + typed errors; outage tests added in this pass; no live chaos drill |
 | C3 | Authentication + per-client identity | **PARTIAL** | optional bearer/cookie auth gate added this pass; default stays open for trusted-LAN use; no user database/RBAC |
 | C4 | Input and filesystem safety | **PARTIAL** | SQL sandbox + upload cap + non-root image; MCP file roots added this pass; archive-bomb limits not profiled |
@@ -30,7 +30,7 @@ not implemented.
 | C9 | Scale / HA | **OPEN** | single-worker in-memory sessions; external session store still required for multi-worker |
 | C10 | Release hygiene | **MET** | annotated tags + GitHub releases; `__version__` synced in this pass; changelog process documented |
 
-## C1 — Correctness and auditability
+## C1 - Correctness and auditability
 
 The product promise: the LLM never executes code and never invents numbers.
 
@@ -41,13 +41,13 @@ Acceptance:
 - `verify_claims` rejects fabricated numbers and detects tampered run evidence.
 - Determinism claim is scoped: numbers are deterministic given inputs; plans are not.
 
-Current evidence: `TEST.md` → "Verification evidence" and "Toolkit + MCP real-data
+Current evidence: `docs/TEST.md` → "Verification evidence" and "Toolkit + MCP real-data
 smoke"; `tests/test_verification.py`, `tests/test_toolkit.py`, grounding/gateway tests.
 
 Remaining: assert "zero ungrounded numbers shipped" as an end-to-end invariant across
 all UI answer paths (today the guarantee is tested at the component level).
 
-## C2 — Failure containment
+## C2 - Failure containment
 
 Acceptance:
 - Provider auth failure, 429 exhaustion, timeout or empty-content response always
@@ -62,7 +62,7 @@ plus the outage tests added 2026-10-20.
 Remaining: a live provider-outage drill against a staging deployment; queue-depth and
 concurrency behavior under sustained throttle.
 
-## C3 — Authentication and per-client identity
+## C3 - Authentication and per-client identity
 
 Acceptance:
 - A deployment can require authentication for every non-health route with one env var.
@@ -79,7 +79,7 @@ tests in `tests/test_webapp_security.py`.
 Remaining: user database/RBAC is out of scope; deployments needing SSO should put
 Insight behind an authenticating reverse proxy and set `INSIGHT_TRUST_PROXY_AUTH=on`.
 
-## C4 — Input and filesystem safety
+## C4 - Input and filesystem safety
 
 Acceptance:
 - SQL is read-only, single-statement, locked config, no external file access, bounded
@@ -97,7 +97,7 @@ caps in `webapp/app.py` (80 MB/file, 160 MB/request, 6 files, 256 MB normalized;
 
 Remaining: archive/Excel bomb resource profiling; per-request total-memory ceiling.
 
-## C5 — Rate and spend limits
+## C5 - Rate and spend limits
 
 Acceptance:
 - Query and upload endpoints enforce per-identity sliding-window limits, configurable
@@ -111,7 +111,7 @@ budgets in `insight/settings.py` and agentic loop.
 Remaining: provider-account spend caps and quota dashboards are deployment concerns
 not implemented here; document the expected proxy/gateway controls.
 
-## C6 — Observability and SLOs
+## C6 - Observability and SLOs
 
 Acceptance:
 - Every request gets a request ID (inbound ID preserved), returned in `X-Request-ID`.
@@ -127,7 +127,7 @@ Remaining: alert rules/error-budget policy and a load-test baseline on target ha
 (`tools/load_test.py` provides the harness; no published numbers yet); no
 Prometheus/Grafana deployment is bundled.
 
-## C7 — Data lifecycle
+## C7 - Data lifecycle
 
 Acceptance:
 - Sessions expire after a configurable idle TTL; the session store is bounded (LRU).
@@ -144,7 +144,7 @@ dataset replacement and query serialization in `webapp/app.py`; `insight/retenti
 
 Remaining: automatic disk-quota enforcement; PII classification/erasure workflow.
 
-## C8 — Delivery and supply chain
+## C8 - Delivery and supply chain
 
 Acceptance:
 - CI runs lint + offline suite on every push/PR.
@@ -156,14 +156,14 @@ Current evidence: `.github/workflows/ci.yml` (test, security, docker jobs); rele
 `v2.2.0`, `v2.3.0`. Remaining: lockfile + SBOM/attestation (image digest signing) is a
 follow-up; current requirements use ranges.
 
-## C9 — Scale and HA
+## C9 - Scale and HA
 
 Acceptance:
 - More than one worker can serve requests without session loss or cross-session bleed.
 - Session state is externalized or sticky sessions are a documented, tested deployment mode.
 - A load test demonstrates the documented capacity envelope.
 
-Current evidence: none — the Dockerfile and docs explicitly constrain deployments to one
+Current evidence: none - the Dockerfile and docs explicitly constrain deployments to one
 worker. This is the largest remaining production gap.
 
 Remaining: external session store (Redis or equivalent), multi-worker test, load baseline.
@@ -171,10 +171,10 @@ Remaining: external session store (Redis or equivalent), multi-worker test, load
 contained change; the blocker is serializing `WebSession` (DataFrames, responses) and
 choosing a consistency model. Do not claim HA until this ships.
 
-## C10 — Release hygiene
+## C10 - Release hygiene
 
 Acceptance:
-- Semantic version tags, GitHub release notes with claims tied to `TEST.md` evidence.
+- Semantic version tags, GitHub release notes with claims tied to `docs/TEST.md` evidence.
 - `insight.__version__` matches the latest release tag (checked at release time).
 - Rollback = redeploy the previous git tag/image; DB/cache formats are versioned.
 
@@ -188,7 +188,7 @@ written rollback runbook and image digests in release notes.
 - [x] Auth gate, rate limits and artifact ownership checks exist and are tested.
 - [x] Request IDs, access logs, `/metrics`, `/readyz` exist.
 - [x] Session caps/TTL and artifact retention exist.
-- [ ] External session store + multi-worker load test (C9) — **the only structural gate left**.
+- [ ] External session store + multi-worker load test (C9) - **the only structural gate left**.
 - [ ] Provider-outage drill on staging (C2) and SLO/alert policy (C6).
 - [ ] Spend caps at the provider/gateway layer documented for the deployment (C5).
 
