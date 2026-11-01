@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -269,3 +270,197 @@ def test_correlation_asymmetry_detected():
     fake_execution.steps[0].output.table = tampered
     issues = independently_verify(df, plan, fake_execution)
     assert any("symmetric" in i.message for i in issues)
+
+
+def test_regression_recomputation_verifies_and_catches_tamper():
+    rng = np.random.default_rng(5)
+    n = 80
+    x1 = rng.normal(0, 1.5, n)
+    x2 = rng.normal(0, 1.0, n)
+    y = 2.5 + 1.7 * x1 - 0.9 * x2 + rng.normal(0, 0.2, n)
+    df = pd.DataFrame({"x1": x1, "x2": x2, "y": y})
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0,
+        operation="regression",
+        params={"target_column": "y", "feature_columns": ["x1", "x2"]},
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    assert independently_verify(df, plan, execution) == []
+
+    table = execution.tables_by_step()[0]
+    table.rows[1][table.columns.index("coefficient")] += 1.0
+    issues = independently_verify(df, plan, execution)
+    assert any(
+        "regression" in i.message and "coefficient" in i.message for i in issues
+    ), [i.message for i in issues]
+
+
+def test_regression_calculation_tamper_is_caught():
+    rng = np.random.default_rng(6)
+    n = 50
+    x = rng.normal(0, 1, n)
+    y = 4.0 + 2.0 * x + rng.normal(0, 0.3, n)
+    df = pd.DataFrame({"x": x, "y": y})
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0,
+        operation="regression",
+        params={"target_column": "y", "feature_columns": ["x"]},
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    assert independently_verify(df, plan, execution) == []
+
+    calc = next(
+        c for c in execution.steps[0].output.calculations if c.label == "r_squared"
+    )
+    calc.value = float(calc.value) - 0.05
+    issues = independently_verify(df, plan, execution)
+    assert any("regression r_squared" in i.message for i in issues)
+
+
+def test_anova_recomputation_verifies_and_catches_statistic_tamper():
+    rng = np.random.default_rng(7)
+    df = pd.DataFrame({
+        "group": ["a"] * 40 + ["b"] * 40 + ["c"] * 40,
+        "value": np.concatenate([
+            rng.normal(10, 2, 40),
+            rng.normal(14, 2, 40),
+            rng.normal(18, 2, 40),
+        ]),
+    })
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0,
+        operation="anova_test",
+        params={"group_column": "group", "value_column": "value"},
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    assert independently_verify(df, plan, execution) == []
+
+    calc = next(
+        c for c in execution.steps[0].output.calculations if c.label == "statistic"
+    )
+    calc.value = float(calc.value) + 1.0
+    issues = independently_verify(df, plan, execution)
+    assert any("anova_test statistic" in i.message for i in issues), [
+        i.message for i in issues
+    ]
+
+
+def test_anova_group_summary_tamper_is_caught():
+    df = pd.DataFrame({
+        "group": ["a"] * 10 + ["b"] * 10 + ["c"] * 10,
+        "value": list(range(30)),
+    })
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0,
+        operation="anova_test",
+        params={"group_column": "group", "value_column": "value"},
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    assert independently_verify(df, plan, execution) == []
+
+    table = execution.tables_by_step()[0]
+    table.rows[0][table.columns.index("mean")] += 5.0
+    issues = independently_verify(df, plan, execution)
+    assert any("anova_test group" in i.message for i in issues)
+
+
+def test_compare_subsets_recomputation_verifies_and_catches_tamper():
+    df = pd.DataFrame({
+        "group": ["a"] * 40 + ["b"] * 40,
+        "value": list(range(80)),
+    })
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0,
+        operation="compare_subsets",
+        params={
+            "metric": {"column": "value", "agg": "mean"},
+            "subset_a": [{"column": "group", "op": "eq", "value": "a"}],
+            "subset_b": [{"column": "group", "op": "eq", "value": "b"}],
+            "label_a": "A",
+            "label_b": "B",
+        },
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    assert independently_verify(df, plan, execution) == []
+
+    table = execution.tables_by_step()[0]
+    table.rows[1][table.columns.index("value")] += 5.0
+    issues = independently_verify(df, plan, execution)
+    assert any("compare_subsets" in i.message for i in issues), [
+        i.message for i in issues
+    ]
+
+
+def test_compare_subsets_delta_tamper_is_caught():
+    df = pd.DataFrame({
+        "group": ["a"] * 10 + ["b"] * 10,
+        "value": [float(v) for v in range(20)],
+    })
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0,
+        operation="compare_subsets",
+        params={
+            "metric": {"column": "value", "agg": "sum"},
+            "subset_a": [{"column": "group", "op": "eq", "value": "a"}],
+            "subset_b": [{"column": "group", "op": "eq", "value": "b"}],
+        },
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    assert independently_verify(df, plan, execution) == []
+
+    calc = next(
+        c for c in execution.steps[0].output.calculations
+        if c.label == "absolute_delta"
+    )
+    calc.value = float(calc.value) + 3.0
+    issues = independently_verify(df, plan, execution)
+    assert any("absolute_delta" in i.message for i in issues)
+
+
+def test_new_statistical_verifiers_tolerate_filters_and_missingness():
+    rng = np.random.default_rng(12)
+    n = 120
+    df = pd.DataFrame({
+        "group": ["a", "b", "c"] * (n // 3),
+        "flag": [1, 0, 1, 0] * (n // 4),
+        "x1": rng.normal(0, 1, n),
+        "x2": rng.normal(0, 1, n),
+    })
+    df["y"] = 3 + 1.2 * df["x1"] - 0.4 * df["x2"] + rng.normal(0, 0.1, n)
+    df.loc[::19, "x1"] = np.nan
+    df.loc[::23, "y"] = np.nan
+    plans = [
+        AnalysisPlan(objective="t", steps=[PlanStep(
+            step_id=0,
+            operation="regression",
+            params={
+                "target_column": "y",
+                "feature_columns": ["x1", "x2"],
+                "filters": [{"column": "flag", "op": "eq", "value": 1}],
+            },
+        )], charts=[]),
+        AnalysisPlan(objective="t", steps=[PlanStep(
+            step_id=0,
+            operation="anova_test",
+            params={
+                "group_column": "group",
+                "value_column": "y",
+                "filters": [{"column": "flag", "op": "eq", "value": 1}],
+            },
+        )], charts=[]),
+        AnalysisPlan(objective="t", steps=[PlanStep(
+            step_id=0,
+            operation="compare_subsets",
+            params={
+                "metric": {"column": "y", "agg": "mean"},
+                "subset_a": [{"column": "group", "op": "eq", "value": "a"}],
+                "subset_b": [{"column": "group", "op": "eq", "value": "b"}],
+                "label_a": "A",
+                "label_b": "B",
+            },
+        )], charts=[]),
+    ]
+    for plan in plans:
+        execution = execute_plan_sync(df, plan)
+        issues = independently_verify(df, plan, execution)
+        assert issues == [], [i.message for i in issues]

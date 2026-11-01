@@ -50,7 +50,11 @@ class Settings(BaseModel):
     max_retries_per_call: int = 3
     planner_max_tokens: int = 3000
     explainer_max_tokens: int = 1500
-    max_repair_attempts: int = 1
+    max_repair_attempts: int = Field(
+        default_factory=lambda: max(
+            0, int(os.getenv("INSIGHT_MAX_REPAIR_ATTEMPTS", "1") or 1)
+        )
+    )
     # When on, every question stops at a reviewable plan before execution.
     plan_approval: bool = Field(
         default_factory=lambda: os.getenv("INSIGHT_PLAN_APPROVAL", "")

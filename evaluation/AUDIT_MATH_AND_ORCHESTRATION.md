@@ -37,7 +37,7 @@ reported `unverified_figures: []`** on both, i.e. every number in the narrative
 
 | Layer | What it proves | Coverage |
 |---|---|---|
-| Independent recomputation (`validation/verification.py`) | every headline aggregate re-derived through a second arithmetic path | group_aggregate, top_n, value_counts, correlation |
+| Independent recomputation (`validation/verification.py`) | every headline aggregate re-derived through a second arithmetic path | group_aggregate, top_n, value_counts, correlation, regression, anova_test, compare_subsets |
 | Golden cases (`evaluation/`) | exact expected values from independently computed ground truth (±0.5% default) | 20 cases / 5 datasets |
 | Statistical routing (`test_statistics.py`) | t-test, Mann-Whitney, chi², ANOVA+η², OLS coefficients, CIs, isotonic PAV | 26 tests |
 | Real-world cross-check (`REAL_WORLD_LOG.md`) | diamonds + 4-sheet clinical workbook vs pandas/scipy truth | 16 questions |
@@ -66,9 +66,9 @@ plan (LLM, JSON)  ──✗──► plan_validation_failed → explicit "what w
    ↓ ok
 execute (deterministic ops / sandboxed DuckDB)  ──✗──► step error
    ↓                                            ↓
-validate (sanity, small-N, MCAR, chart refs)     └──► repair once
+validate (sanity, small-N, MCAR, chart refs)     └──► repair (bounded)
    ↓ ok                                             (re-plan with error text)
-independent recomputation ──✗──► repair once
+independent recomputation ──✗──► repair (bounded)
    ↓ ok
 render charts (editorial, adaptive bins, fallbacks)
    ↓

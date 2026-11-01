@@ -46,7 +46,7 @@ Both front-ends share one engine (`insight/`): **FastAPI webapp** (primary, `web
 | `insight/visualization/` | `themes.py` (editorial/minimal/dark) + `renderer.py` (ChartSpec→PNG; adaptive bins live in distribution op; Other-bucket, horizontal-bar, tick formatting here) |
 | `insight/orchestrator.py` | `analyze_stream()` async generator (stage / delta / plan_review events) wrapped by `analyze()`; `run_analysis_sync()` for sync UIs. Owns cache, timing meta (`planning_ms`, `repair_ms`, `first_token_ms`, …) and the HITL gate |
 | `insight/observability.py` | LangSmith tracing (optional; `INSIGHT_TRACING=off` kills it) - root run + `trace_phase` spans |
-| `insight/settings.py` | all config via env; `.env` auto-loaded |
+| `insight/settings.py` | configuration model; operational settings via env (`.env` auto-loaded); model IDs and generation limits remain code defaults |
 | `webapp/` | FastAPI: `app.py` routes, `sessions.py` cookie store, `services.py` thin webapp IO (delegates parsing to `insight/ingest.py`), Jinja `templates/`, `static/` (CSS + app.js SSE client w/ typing bubble + plan review + live agent tool trail) |
 | `legacy_streamlit/` | Streamlit legacy UI (same engine via cached wrappers) |
 | `tests/` | Offline suite, green in CI (fake providers / scripted chains). Key fixtures in `conftest.py`. Pass/skip split varies by platform and by which optional corpora are present - assert exit code, not count |
@@ -197,6 +197,11 @@ requests are excluded from cache read AND write.
 `explaining_ms` - a repair loop was previously invisible (31s unaccounted).
 `repair_issues` initially landed in the LangSmith span block instead of the
 response meta; watch for that class of mistake.
+
+**Repair budget**: `INSIGHT_MAX_REPAIR_ATTEMPTS` (default `1`, `0` disables)
+bounds both planner-internal schema repair and the orchestrator's
+execute/validate repair loop. The two paths share the same setting instead of
+the result-repair path hardcoding a single retry.
 
 **Background briefing**: LLM polish moved to `BackgroundTasks` so the upload
 redirect never waits on it. `findings_status` guards with a `data_id`

@@ -80,6 +80,45 @@ def test_repair_after_execution_failure(stub_chain_factory, sales_df, profile, t
     assert len(llm.requests) == 3
 
 
+def test_repair_loop_honors_max_repair_attempts(
+    stub_chain_factory, sales_df, profile, tmp_path, monkeypatch
+):
+    from insight.settings import get_settings
+
+    broken_plan = """
+    {
+      "objective": "t",
+      "steps": [
+        {"step_id": 0, "operation": "group_aggregate",
+         "params": {"group_by": "region",
+                    "metrics": [{"column": "revenue", "agg": "sum"}],
+                    "sort_by": "not_a_real_column"}}
+      ]
+    }
+    """.strip()
+    monkeypatch.setenv("INSIGHT_MAX_REPAIR_ATTEMPTS", "2")
+    get_settings.cache_clear()
+    try:
+        llm = stub_chain_factory(
+            [broken_plan, broken_plan, VALID_PLAN, EXPLANATION]
+        )
+        response = run_analysis_sync(
+            sales_df,
+            profile,
+            AnalysisRequest(question="revenue by region"),
+            artifacts_dir=tmp_path,
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert response.error is None
+    assert response.meta["repair_attempted"] is True
+    assert response.meta["repair_attempts"] == 2
+    assert response.validation.valid
+    assert response.answer.startswith("**West leads**")
+    assert len(llm.requests) == 4
+
+
 def test_explainer_receives_rendered_figure_list(stub_chain_factory, sales_df, profile, tmp_path):
     llm = stub_chain_factory([VALID_PLAN, EXPLANATION])
 

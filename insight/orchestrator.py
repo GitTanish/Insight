@@ -1057,43 +1057,51 @@ async def analyze_stream(
         "warning_count": len(validation.warnings),
     }
 
-    if not validation.valid and settings.max_repair_attempts > 0:
+    max_repairs = max(0, settings.max_repair_attempts)
+    if not validation.valid and max_repairs > 0:
         repair_attempted = True
-        repair_issues: list[str] = list(validation.error_messages())[:8]
-        yield {
-            "type": "stage",
-            "key": "repairing",
-            "label": "Validator rejected results â€” repairing plan once...",
-            "level": "warn",
-        }
-        repair_summary = "; ".join(validation.error_messages()[:8])
-        repair_question = (
-            f"{request.question}\n\n(A previous attempt failed: {repair_summary}. "
-            "Produce a corrected plan avoiding these problems.)"
-        )
-        try:
+        repair_issues = list(validation.error_messages())[:8]
+        for attempt in range(1, max_repairs + 1):
+            yield {
+                "type": "stage",
+                "key": "repairing",
+                "label": (
+                    "Validator rejected results — repairing plan "
+                    f"(attempt {attempt}/{max_repairs})..."
+                ),
+                "level": "warn",
+            }
+            repair_summary = "; ".join(validation.error_messages()[:8])
+            repair_question = (
+                f"{request.question}\n\n(A previous attempt failed: {repair_summary}. "
+                "Produce a corrected plan avoiding these problems.)"
+            )
             t_repair = time.monotonic()
-            repaired_plan = await planner.plan(
-                repair_question,
-                profile,
-                history=history,
-                session_context=session_context,
-                sql_schema=sql_schema_text,
-            )
-            repair_attempts = 1
-            second_execution = await _execute_with_sql(repaired_plan)
-            second_validation = validate_execution(
-                repaired_plan, second_execution, df=df, profile=profile
-            )
-            plan, execution, validation = (
-                repaired_plan,
-                second_execution,
-                second_validation,
-            )
-        except PlanValidationError:
-            repair_attempts = 1
-        finally:
-            repair_ms += int((time.monotonic() - t_repair) * 1000)
+            try:
+                repaired_plan = await planner.plan(
+                    repair_question,
+                    profile,
+                    history=history,
+                    session_context=session_context,
+                    sql_schema=sql_schema_text,
+                )
+                second_execution = await _execute_with_sql(repaired_plan)
+                second_validation = validate_execution(
+                    repaired_plan, second_execution, df=df, profile=profile
+                )
+            except PlanValidationError:
+                repair_attempts = attempt
+            else:
+                repair_attempts = attempt
+                plan, execution, validation = (
+                    repaired_plan,
+                    second_execution,
+                    second_validation,
+                )
+                if validation.valid:
+                    break
+            finally:
+                repair_ms += int((time.monotonic() - t_repair) * 1000)
 
     async for event in _tail_events(_TailCtx(
         df=df,
