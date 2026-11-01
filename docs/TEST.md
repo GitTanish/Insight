@@ -209,11 +209,13 @@ To verify whether Insight is *actually correct* rather than merely returning pla
 
 ### Offline Unit & Integration Test Suite (`tests/`)
 
-The repository contains **43 tracked test files** (`git ls-files tests/`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 - **never** an absolute test count (see Documentation Discrepancies).
+The repository contains **46 tracked test modules** (`git ls-files "tests/test_*.py"`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 - **never** an absolute test count (see Documentation Discrepancies).
 
 | Test File | What It Actually Exercises | Weaknesses / False-Confidence Risks |
 |---|---|---|
 | `test_operations.py` | 15 deterministic operations under normal data; filtered frames stay mutation-safe (originals untouched, no `SettingWithCopyWarning`); the auto-catalog renders `filters ({column, op, value}[])` - flat, never `[][]` | Does not test extreme null cascades (covered in `test_invariants.py`). |
+| `test_differential_operations.py` | Seven operation families executed on seeded frames and compared with independent pandas/NumPy/SciPy references: grouped aggregates, stable top-N, value counts, pairwise correlations, subset CIs, ANOVA, and OLS | Three synthetic seeds only; references share pandas/NumPy/SciPy primitives, so they are independent of the verifier but not of the libraries. |
+| `test_metamorphic_operations.py` | Exact metamorphic relations for row permutation, duplicate rows, positive scaling, and additive shifts across the same seven operations, including the ddof=1 standard-deviation and ANOVA degrees-of-freedom effects | Encodes mathematical relations rather than real-data edge cases; does not cover null cascades or categorical ordering. |
 | `test_statistics.py` | SciPy routing, t-test, ANOVA, OLS, isotonic PAV | Relies on synthetic distributions; extreme collinearity not fully stressed. |
 | `test_sql_engine.py` | DuckDB session setup, table sanitization, keyword guards, watchdog interrupt, describe | Tests keyword blocklist, but does not test exotic DuckDB extensions. |
 | `test_validator.py` | Sanity checks, empty table detection, MCAR caveats | Does not test multi-step DAG validation where intermediate steps fail. |
@@ -303,7 +305,7 @@ Claim → check matrix for the agentic layer. **A claim without a check below is
 | Works across other providers | Anthropic/OpenAI payload-shape tests | Groq smokes + historical 17/20 only | **PARTIAL / UNVERIFIED broadly** |
 | Live SSE tool trail | `test_webapp_agentic.py` (SSE frames asserted) | 2026-10-17 live smoke (`tools/sse_smoke.py`): tool_call → tool_result in order, 32 streamed delta chunks, result cites "West", no error frame | **PROVEN live** |
 
-**Mutation sampling** (`tools/mutate.py`; mutmut is WSL-only, this is the curated substitute): 11 single-site mutations targeting `loop.py` invariants, the wire parser (incl. the harmony-token sanitizer), reasoning-effort stripping, the truncation hint and the HITL guard - **11/11 killed** by the offline suite. The first sampling round survived 1/7: nothing tested that `filter_rows` narrows the implicit working frame; the gap was closed with `test_filter_rows_narrows_working_frame_for_later_calls`. Sampled, not exhaustive - do not present this as a mutation score.
+**Mutation sampling** (`tools/mutate.py`; mutmut is WSL-only, this is the curated substitute): 23 single-site mutations targeting `loop.py` invariants, the wire parser (incl. the harmony-token sanitizer), reasoning-effort stripping, the truncation hint, the HITL guard, verifier recomputation and schema checks, final-validator gates, grounding, and executor failure propagation - **23/23 killed** by the offline suite. Two rounds found real test gaps. The first survived 1/7: nothing tested that `filter_rows` narrows the implicit working frame; the gap was closed with `test_filter_rows_narrows_working_frame_for_later_calls`. The trust-core round survived 1/5: the verifier's top-N output-schema check was only exercised by a value tamper, not by a dropped projected column; the gap was closed with `test_top_n_dropped_projected_column_is_detected`. Sampled, not exhaustive - do not present this as a mutation score.
 
 **Branch coverage** (`coverage run --branch` over the agentic + provider test selection): `insight/tools/loop.py` **96%** branch; `insight/tools/` between 75% and 100% (scoped total 81%). Remaining `openai_compat.py` misses are the SSE stream parser, `list_models` discovery and retry-sleep branches - pre-existing non-agentic paths; the wire-format functions are fully covered.
 
@@ -482,7 +484,7 @@ python evaluation/run_eval.py --model nvidia/openai/gpt-oss-20b --no-fallback
 # Aggregate repeated runs into stats (per-case passes/k, 95% Wilson CI, cost)
 python evaluation/ab_stats.py --agentic DIR1,DIR2 --baseline DIR3,DIR4
 
-# Mutation sampling + branch coverage of the agentic tool layer (offline, no keys)
+# Mutation sampling + branch coverage of the agentic tool layer and trust core (offline, no keys)
 python tools/mutate.py
 python -m coverage run --branch --source=insight.tools,insight.llm.providers.openai_compat -m pytest tests/test_agentic_tools.py tests/test_agentic_pipeline.py tests/test_agentic_adversarial.py tests/test_agentic_replay.py tests/test_webapp_agentic.py tests/test_chain_fallback.py tests/test_providers.py -q
 python -m coverage report -m

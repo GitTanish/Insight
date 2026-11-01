@@ -245,6 +245,25 @@ def test_top_n_projected_columns_tamper_is_caught():
     assert any("top_n" in i.message for i in issues)
 
 
+def test_top_n_dropped_projected_column_is_detected():
+    df = pd.DataFrame({"region": ["N", "S", "E"], "revenue": [10, 30, 20]})
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0,
+        operation="top_n",
+        params={"sort_by": "revenue", "n": 2, "columns": ["region"]},
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    table = execution.tables_by_step()[0]
+    index = table.columns.index("region")
+    table.columns.pop(index)
+    for row in table.rows:
+        row.pop(index)
+    issues = independently_verify(df, plan, execution)
+    assert any(
+        "top_n output column 'region' missing" in i.message for i in issues
+    ), [i.message for i in issues]
+
+
 def test_top_n_projected_columns_with_filter_verifies_clean():
     df = pd.DataFrame({
         "region": ["N", "S", "E", "W", "N"],
