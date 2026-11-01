@@ -58,6 +58,11 @@ class Settings(BaseModel):
         .lower()
         in {"1", "true", "yes", "on"}
     )
+    plan_approval_ttl_minutes: int = Field(
+        default_factory=lambda: int(
+            os.getenv("INSIGHT_PLAN_APPROVAL_TTL_MINUTES", "30") or 30
+        )
+    )
     require_user_key: bool = Field(
         default_factory=lambda: os.getenv("INSIGHT_REQUIRE_USER_KEY", "")
         .strip()

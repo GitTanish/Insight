@@ -21,6 +21,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 
 from insight.briefing import findings_to_dicts, generate_briefing
 from insight.domain.query import AnalysisRequest
@@ -588,6 +589,7 @@ async def query(
     model_id: str = Form(default=""),
     temperature: float = Form(default=-1),
     approved_plan: str = Form(default=""),
+    approval: str = Form(default=""),
     agentic: str = Form(default=""),
 ):
     sid = request.cookies.get("insight_sid") or svc.new_session_id()
@@ -610,14 +612,38 @@ async def query(
         except json.JSONDecodeError:
             return JSONResponse({"error": "approved_plan is not valid JSON"}, status_code=400)
 
-    analysis_request = AnalysisRequest(
-        question=question,
-        model_id=model_id or session.model_id or None,
-        temperature=(temperature if temperature is not None and temperature >= 0 else None),
-        api_key=user_key,
-        approved_plan=plan_payload,
-        agentic=_resolve_agentic_flag(agentic),
-    )
+    approval_payload: dict | None = None
+    if approval.strip():
+        try:
+            approval_payload = json.loads(approval)
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "approval is not valid JSON"}, status_code=400)
+    if plan_payload is not None and approval_payload is None:
+        return JSONResponse(
+            {
+                "error": (
+                    "approval metadata is required with an approved plan; "
+                    "review the plan again"
+                )
+            },
+            status_code=400,
+        )
+
+    try:
+        analysis_request = AnalysisRequest(
+            question=question,
+            model_id=model_id or session.model_id or None,
+            temperature=(temperature if temperature is not None and temperature >= 0 else None),
+            api_key=user_key,
+            approved_plan=plan_payload,
+            approval=approval_payload,
+            agentic=_resolve_agentic_flag(agentic),
+        )
+    except ValidationError as exc:
+        return JSONResponse(
+            {"error": f"invalid approval metadata: {exc.errors()[0]['msg']}"},
+            status_code=400,
+        )
 
     if not session.begin_query():
         return JSONResponse(
@@ -651,6 +677,7 @@ async def query(
                 history=context.history,
                 state=context.state,
                 datasets=context.datasets,
+                dataset_generation=context.generation,
             ):
                 etype = event["type"]
                 if etype == "result":
@@ -711,21 +738,39 @@ async def api_query(request: Request):
 
     plan_only = bool(body.get("plan_only")) or get_settings().plan_approval
     approved_plan = body.get("approved_plan")
+    approval = body.get("approval")
     if plan_only and approved_plan is not None:
         return JSONResponse(
             {"error": "plan_only and approved_plan are mutually exclusive"},
             status_code=400,
         )
+    if approved_plan is not None and approval is None:
+        return JSONResponse(
+            {
+                "error": (
+                    "approval metadata is required with an approved plan; "
+                    "call plan_only first and submit the returned approval"
+                )
+            },
+            status_code=400,
+        )
 
-    analysis_request = AnalysisRequest(
-        question=question,
-        model_id=body.get("model_id"),
-        temperature=body.get("temperature"),
-        api_key=user_key,
-        plan_only=plan_only,
-        approved_plan=approved_plan,
-        agentic=_resolve_agentic_flag(body.get("agentic")),
-    )
+    try:
+        analysis_request = AnalysisRequest(
+            question=question,
+            model_id=body.get("model_id"),
+            temperature=body.get("temperature"),
+            api_key=user_key,
+            plan_only=plan_only,
+            approved_plan=approved_plan,
+            approval=approval,
+            agentic=_resolve_agentic_flag(body.get("agentic")),
+        )
+    except ValidationError as exc:
+        return JSONResponse(
+            {"error": f"invalid approval metadata: {exc.errors()[0]['msg']}"},
+            status_code=400,
+        )
 
     if not session.begin_query():
         return JSONResponse(
@@ -750,9 +795,15 @@ async def api_query(request: Request):
                 analysis_request,
                 artifacts_dir=context.artifacts_dir,
                 datasets=context.datasets or None,
+                dataset_generation=context.generation,
             ):
                 if event.get("type") == "plan_review":
-                    return JSONResponse({"plan": event["plan"]})
+                    return JSONResponse(
+                        {
+                            "plan": event["plan"],
+                            "approval": event.get("approval"),
+                        }
+                    )
             return JSONResponse(
                 {"error": "planner did not return a reviewable plan"}, status_code=502
             )
@@ -764,6 +815,7 @@ async def api_query(request: Request):
             analysis_request,
             artifacts_dir=context.artifacts_dir,
             datasets=context.datasets or None,
+            dataset_generation=context.generation,
         ):
             if event.get("type") == "result":
                 response = event["response"]

@@ -33,6 +33,10 @@ from insight.observability import (
 from insight.planning.planner import Planner
 from insight.planning.prompts import build_explainer_messages
 from insight.settings import get_settings
+from insight.validation.approval import (
+    build_plan_approval,
+    validate_plan_approval,
+)
 from insight.validation.result_validator import validate_execution
 from insight.visualization.renderer import render_charts
 from insight.visualization.themes import EDITORIAL_THEME
@@ -653,6 +657,7 @@ async def analyze_stream(
     state: Optional[AnalysisSessionState] = None,
     datasets: Optional[dict] = None,
     use_cache: bool = True,
+    dataset_generation: Optional[int] = None,
 ) -> AsyncIterator[dict]:
     configure_langsmith()
     settings = get_settings()
@@ -938,6 +943,7 @@ async def analyze_stream(
     repair_ms = 0
     repair_attempts = 0
     repair_issues: list[str] = []
+    approval_meta: dict = {}
 
     yield {"type": "stage", "key": "planning", "label": "Planning investigation..."}
 
@@ -946,6 +952,20 @@ async def analyze_stream(
         if request.approved_plan is not None:
             # The user reviewed (and possibly edited) this plan. Re-validate it
             # against the current schema instead of trusting it blindly.
+            if request.approval is not None:
+                approval_issues, approval_meta = validate_plan_approval(
+                    request.approval,
+                    profile,
+                    generation=dataset_generation,
+                    submitted_plan=request.approved_plan,
+                )
+                if approval_issues:
+                    raise PlanValidationError(approval_issues)
+            else:
+                # Library callers may still submit a plan directly. The webapp
+                # and JSON API require the binding; record its absence so the
+                # response does not imply a human approval was verified.
+                approval_meta = {"bound": False, "reason": "no approval metadata"}
             with trace_phase("planning.plan.approved", question=request.question):
                 plan, approved_issues = validate_plan_columns(
                     AnalysisPlan.model_validate(request.approved_plan), profile
@@ -998,12 +1018,17 @@ async def analyze_stream(
 
     if request.plan_only or settings.plan_approval:
         # Human-in-the-loop: hand the plan to the user for review/edit and stop
-        # before any data is executed.
+        # before any data is executed. The approval binding makes the returned
+        # plan valid only for this dataset generation and for a short time.
         plan_payload = plan.model_dump(mode="json")
+        approval = build_plan_approval(
+            plan_payload, profile, generation=dataset_generation
+        )
         yield {
             "type": "plan_review",
             "plan": plan_payload,
             "question": request.question,
+            "approval": approval.model_dump(mode="json"),
         }
         finish_root_run(
             root_client, root_run,
@@ -1090,6 +1115,7 @@ async def analyze_stream(
         repair_ms=repair_ms,
         repair_attempts=repair_attempts,
         repair_issues=repair_issues,
+        extra_meta={"approval": approval_meta} if approval_meta else {},
     )):
         yield event
     return
@@ -1104,6 +1130,7 @@ async def analyze(
     state: Optional[AnalysisSessionState] = None,
     use_cache: bool = True,
     datasets: Optional[dict] = None,
+    dataset_generation: Optional[int] = None,
 ) -> AnalysisResponse:
     import datetime as _dt
     from pathlib import Path as _Path
@@ -1141,7 +1168,15 @@ async def analyze(
     pipeline_error: Exception | None = None
     try:
         async for event in analyze_stream(
-            df, profile, request, artifacts_dir, history, state, datasets, use_cache
+            df,
+            profile,
+            request,
+            artifacts_dir,
+            history,
+            state,
+            datasets,
+            use_cache,
+            dataset_generation,
         ):
             if event["type"] == "result":
                 response = event["response"]
@@ -1183,11 +1218,22 @@ def run_analysis_sync(
     state: Optional[AnalysisSessionState] = None,
     use_cache: bool = True,
     datasets: Optional[dict] = None,
+    dataset_generation: Optional[int] = None,
 ) -> AnalysisResponse:
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(
-            analyze(df, profile, request, artifacts_dir, history, state, use_cache, datasets)
+            analyze(
+                df,
+                profile,
+                request,
+                artifacts_dir,
+                history,
+                state,
+                use_cache,
+                datasets,
+                dataset_generation,
+            )
         )
     finally:
         try:
