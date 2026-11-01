@@ -156,11 +156,16 @@ Config: `INSIGHT_MCP_TRANSPORT` (`stdio` | `sse` | `streamable-http`), `INSIGHT_
 A SQL answer exports an **Alert monitor**: query + cron hint + threshold + Slack-ready webhook template. `tools/alert_runner.py` is the companion worker that closes the loop:
 
 ```bash
+python -m tools.alert_runner --data data --monitors .artifacts/monitors
 python -m tools.alert_runner --data data --monitors .artifacts/monitors --interval 300
 python -m tools.alert_runner --once --dry-run     # render payloads, post nothing
 ```
 
-It registers the CSVs as DuckDB tables, runs each monitor's query through the *same sandboxed session* the webapp uses (SELECT/WITH-only, keyword guards, interrupt watchdog, row cap), applies the threshold, and posts to the webhook when the condition **changes state** (recovery notifications via `--notify-recovery`, `--repeat` to post every cycle instead). Stdlib-only. The URL comes from the monitor's `webhook.url_env` (default `INSIGHT_ALERT_WEBHOOK_URL`) or `--webhook`.
+It registers the CSVs as DuckDB tables, runs each monitor's query through the *same sandboxed session* the webapp uses (SELECT/WITH-only, keyword guards, interrupt watchdog, row cap), applies the threshold, and posts to the webhook when the condition **changes state** (recovery notifications via `--notify-recovery`, `--repeat` to post every cycle instead).
+
+Without `--once` or `--interval`, each monitor's `schedule_cron` drives it (five-field local time: minute hour day month weekday; `*`, ranges, lists, and `/step` are supported). The worker checks every `--poll` seconds (default 30) and runs only the monitors that are due; exported monitors default to hourly (`0 * * * *`).
+
+Fired-monitor state and last-run times are persisted to `--state` (default `.artifacts/alert_state.json`), so a restart does not re-post an already-triggering monitor and recovery is still detected. `--no-state` opts out, and `--dry-run` does not persist unless `--state` is given explicitly. `--interval` overrides cron with a fixed cadence. One worker should own a state file: there is no cross-instance lock, so run exactly one runner per state path. The URL comes from the monitor's `webhook.url_env` (default `INSIGHT_ALERT_WEBHOOK_URL`) or `--webhook`.
 
 ## Bring your own key (BYOK)
 

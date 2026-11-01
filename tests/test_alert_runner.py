@@ -1,12 +1,21 @@
 """Offline tests for the alert-runner companion worker (tools/alert_runner.py)."""
 import json
+from datetime import datetime
 
 import pandas as pd
 import pytest
 
 from insight.analytics.sql_engine import DuckSession
 from insight.reports.artifacts import build_alert_monitor
-from tools.alert_runner import Monitor, Runner, load_datasets, load_monitors, main
+from tools.alert_runner import (
+    CronSchedule,
+    Monitor,
+    Runner,
+    _due_monitors,
+    load_datasets,
+    load_monitors,
+    main,
+)
 
 
 @pytest.fixture
@@ -118,6 +127,154 @@ def test_state_change_posts_once_then_holds(data_dir, capsys):
     assert runner.posted == 2
 
 
+def test_cron_schedule_handles_steps_and_weekdays():
+    every_15 = CronSchedule.parse("*/15 * * * *")
+    assert every_15.next_after(datetime(2026, 11, 1, 10, 7)) == datetime(2026, 11, 1, 10, 15)
+    assert every_15.next_after(datetime(2026, 11, 1, 10, 15)) == datetime(2026, 11, 1, 10, 30)
+
+    monday_nine = CronSchedule.parse("0 9 * * 1")
+    assert monday_nine.next_after(datetime(2026, 11, 1, 10, 0)) == datetime(2026, 11, 2, 9, 0)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "* * *",
+        "61 * * * *",
+        "* 24 * * *",
+        "* * 0 * *",
+        "* * * 13 *",
+        "* * * * 8",
+        "*/0 * * * *",
+        "1-5/0 * * * *",
+        "0 0 31 2 *",
+    ],
+)
+def test_cron_schedule_rejects_invalid_expressions(expression):
+    with pytest.raises(ValueError):
+        CronSchedule.parse(expression)
+
+
+def test_due_monitors_follow_last_run():
+    monitor = Monitor.from_dict(
+        {"name": "hourly", "query": "SELECT 1", "schedule_cron": "0 * * * *"}
+    )
+    schedule = CronSchedule.parse(monitor.schedule_cron)
+    schedules = {monitor.name: schedule}
+
+    assert _due_monitors(
+        [monitor], schedules, {}, datetime(2026, 11, 1, 10, 30).timestamp()
+    ) == [monitor]
+    assert _due_monitors(
+        [monitor],
+        schedules,
+        {monitor.name: datetime(2026, 11, 1, 10, 0).timestamp()},
+        datetime(2026, 11, 1, 10, 30).timestamp(),
+    ) == []
+    assert _due_monitors(
+        [monitor],
+        schedules,
+        {monitor.name: datetime(2026, 11, 1, 10, 0).timestamp()},
+        datetime(2026, 11, 1, 11, 0).timestamp(),
+    ) == [monitor]
+
+
+def test_state_survives_restart_without_duplicate_alert(data_dir, tmp_path, capsys):
+    monitor = Monitor.from_dict(_export_monitor())
+    state = tmp_path / "alert_state.json"
+    first = Runner(
+        monitors=[monitor],
+        datasets=load_datasets(data_dir),
+        dry_run=True,
+        state_path=state,
+    )
+    first.load_state()
+    first.cycle()
+    assert first.posted == 1
+    payload = json.loads(state.read_text(encoding="utf-8"))
+    entry = payload["monitors"][monitor.name]
+    assert entry["triggered"] is True
+    assert entry["last_run_at"] is not None
+
+    capsys.readouterr()
+    second = Runner(
+        monitors=[monitor],
+        datasets=load_datasets(data_dir),
+        dry_run=True,
+        state_path=state,
+    )
+    second.load_state()
+    second.cycle()
+    assert second.posted == 0
+    assert "still triggered" in capsys.readouterr().out
+
+
+def test_recovery_is_detected_after_restart(data_dir, tmp_path):
+    monitor = Monitor.from_dict({
+        "name": "big_total",
+        "query": "SELECT sum(revenue) AS total FROM sales",
+        "threshold": {"metric_column": "total", "op": ">", "value": 500},
+    })
+    state = tmp_path / "alert_state.json"
+    first = Runner(
+        monitors=[monitor],
+        datasets=load_datasets(data_dir),
+        dry_run=True,
+        state_path=state,
+    )
+    first.load_state()
+    first.cycle()
+    assert first.posted == 1
+
+    (data_dir / "sales.csv").write_text(
+        "region,revenue\nNorth,10\nSouth,20\n", encoding="utf-8"
+    )
+    second = Runner(
+        monitors=[monitor],
+        datasets=load_datasets(data_dir),
+        dry_run=True,
+        notify_recovery=True,
+        state_path=state,
+    )
+    second.load_state()
+    second.cycle()
+    assert second.posted == 1
+    payload = json.loads(state.read_text(encoding="utf-8"))
+    assert payload["monitors"][monitor.name]["triggered"] is False
+
+
+def test_state_with_unknown_version_starts_fresh(tmp_path, capsys):
+    state = tmp_path / "alert_state.json"
+    state.write_text(
+        json.dumps({"version": 99, "monitors": {"other": {"triggered": True}}}),
+        encoding="utf-8",
+    )
+    runner = Runner(monitors=[], state_path=state)
+    runner.load_state()
+
+    assert runner.state == set()
+    assert "unsupported state version" in capsys.readouterr().out
+
+
+def test_save_state_preserves_filtered_monitors(tmp_path):
+    state = tmp_path / "alert_state.json"
+    state.write_text(
+        json.dumps({
+            "version": 1,
+            "monitors": {"other": {"triggered": True, "last_run_at": 1.0}},
+        }),
+        encoding="utf-8",
+    )
+    monitor = Monitor.from_dict({"name": "current", "query": "SELECT 1"})
+    runner = Runner(monitors=[monitor], state_path=state)
+    runner.load_state()
+    runner.save_state()
+
+    payload = json.loads(state.read_text(encoding="utf-8"))
+    assert payload["monitors"]["other"]["triggered"] is True
+    assert payload["monitors"]["current"]["triggered"] is False
+
+
 def test_webhook_post_receives_slack_payload(data_dir, monkeypatch):
     sent: dict = {}
 
@@ -159,6 +316,30 @@ def test_main_once_dry_run(data_dir, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "alert-runner: 1 monitor(s)" in out
     assert "[dry-run] insight_slow_region:" in out
+
+
+def test_main_cron_mode_runs_due_monitor_and_persists_state(data_dir, tmp_path, capsys):
+    monitor = _export_monitor()
+    monitor["schedule_cron"] = "* * * * *"
+    _write_monitor(tmp_path, monitor)
+    state = tmp_path / "alert_state.json"
+
+    code = main([
+        "--monitors", str(tmp_path / "monitors"),
+        "--data", str(data_dir),
+        "--state", str(state),
+        "--dry-run",
+        "--max-runs", "1",
+        "--poll", "1",
+    ])
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "cron schedule active" in out
+    assert "[dry-run] insight_slow_region:" in out
+    payload = json.loads(state.read_text(encoding="utf-8"))
+    assert payload["monitors"]["insight_slow_region"]["triggered"] is True
+    assert payload["monitors"]["insight_slow_region"]["last_run_at"] is not None
 
 
 def test_main_reports_when_no_monitors(tmp_path, capsys):

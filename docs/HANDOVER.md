@@ -269,8 +269,14 @@ webhook worker for exported monitors. Reuses `DuckSession` (same sandbox:
 statement validation, keyword guards, interrupt watchdog, row cap).
 State-change alerting (post on trigger edge, `--notify-recovery`,
 `--repeat`), `--dry-run`, `--once`, `--max-runs`, `--monitor <name>` filter,
-`--webhook` override, URL from the monitor's `webhook.url_env`. Stdlib-only.
-Tests: `test_alert_runner.py` (11).
+`--webhook` override, URL from the monitor's `webhook.url_env`. Without
+`--once`/`--interval`, each monitor's `schedule_cron` (five-field local time;
+`*`, ranges, lists, `/step`) drives per-monitor due times, polled every
+`--poll` seconds. Fired state and last-run times persist atomically to
+`--state` (default `.artifacts/alert_state.json`; off by default under
+`--dry-run`) so restarts do not re-post and recovery is detected. `--interval`
+overrides cron. One worker per state file: there is no cross-instance lock.
+Stdlib-only. Tests: `test_alert_runner.py`.
 
 ### P9 - MCP server + agent verification toolkit
 `insight/toolkit.py`: agent-facing engine API (no LLM) - load tables (CSV/Excel
