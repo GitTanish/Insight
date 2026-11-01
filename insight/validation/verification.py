@@ -278,6 +278,7 @@ def _verify_top_n(df, step, table) -> list[ValidationIssue]:
         return issues
     if work.empty:
         return issues
+    work = work.reset_index(drop=True)
     ascending = _as_bool(params.get("ascending", False))
     sort_key = _numeric(work[sort_col])
     ordered = work.iloc[
