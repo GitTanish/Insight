@@ -334,10 +334,6 @@ def test_user_edit_is_honored_not_overwritten(frame):
 def test_plan_approval_setting_forces_the_gate(frame, monkeypatch):
     monkeypatch.setenv("INSIGHT_PLAN_APPROVAL", "on")
     get_settings.cache_clear()
-    import importlib
-    import insight.settings as settings_mod
-    importlib.reload(settings_mod)
-    get_settings.cache_clear()
     try:
         llm = ScriptedLLM([PLAN])
         orch._build_chain_for = lambda *a, **k: StubChain(llm)
@@ -351,15 +347,10 @@ def test_plan_approval_setting_forces_the_gate(frame, monkeypatch):
     finally:
         monkeypatch.delenv("INSIGHT_PLAN_APPROVAL", raising=False)
         get_settings.cache_clear()
-        importlib.reload(settings_mod)
-        get_settings.cache_clear()
 
 
 def test_plan_review_is_not_cached(frame, monkeypatch):
     get_settings.cache_clear()
-    import importlib
-    import insight.settings as settings_mod
-    importlib.reload(settings_mod)
     try:
         llm = ScriptedLLM([PLAN])
         orch._build_chain_for = lambda *a, **k: StubChain(llm)
@@ -370,8 +361,6 @@ def test_plan_review_is_not_cached(frame, monkeypatch):
         ))
         assert any(e["type"] == "plan_review" for e in events)
     finally:
-        get_settings.cache_clear()
-        importlib.reload(settings_mod)
         get_settings.cache_clear()
 
 

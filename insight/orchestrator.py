@@ -35,6 +35,7 @@ from insight.planning.prompts import build_explainer_messages
 from insight.settings import get_settings
 from insight.validation.approval import (
     build_plan_approval,
+    plan_digest,
     validate_plan_approval,
 )
 from insight.validation.result_validator import validate_execution
@@ -509,6 +510,7 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
     meta: dict = {
         "model": chain.last_used,
         "objective": plan.objective,
+        "plan_hash": plan_digest(plan.model_dump(mode="json")),
         "repair_attempted": ctx.repair_attempted,
         "planning_ms": ctx.planning_ms,
         "repair_ms": ctx.repair_ms,

@@ -61,6 +61,24 @@ def test_readyz_reports_checks(tmp_path, monkeypatch):
     assert report["version"]
 
 
+def test_readyz_checks_the_audit_ledger_when_enabled(tmp_path, monkeypatch):
+    from webapp import readiness
+
+    settings = get_settings().model_copy(
+        update={
+            "artifacts_dir": tmp_path / "artifacts",
+            "audit_ledger": True,
+            "audit_ledger_path": tmp_path / "ledger" / "analysis.jsonl",
+        }
+    )
+    monkeypatch.setattr(readiness, "_provider_configured", lambda s: True)
+
+    ready, report = readiness.readiness_report(settings)
+
+    assert ready is True
+    assert report["audit_ledger_writable"] is True
+
+
 def test_readyz_not_ready_without_provider(tmp_path, monkeypatch):
     from webapp import readiness
 

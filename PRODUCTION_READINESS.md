@@ -40,9 +40,13 @@ Acceptance:
 - The offline suite is green and is the release gate; a red suite blocks release.
 - `verify_claims` rejects fabricated numbers and detects tampered run evidence.
 - Determinism claim is scoped: numbers are deterministic given inputs; plans are not.
+- Plan reviews and completed analyses can be recorded in an append-only,
+  hash-chained evidence ledger (`INSIGHT_AUDIT_LEDGER=on`) that includes the
+  dataset fingerprint, approval binding, plan hash and validation outcome.
 
 Current evidence: `docs/TEST.md` → "Verification evidence" and "Toolkit + MCP real-data
-smoke"; `tests/test_verification.py`, `tests/test_toolkit.py`, grounding/gateway tests.
+smoke"; `tests/test_verification.py`, `tests/test_toolkit.py`, grounding/gateway tests;
+`insight/audit.py` and `tests/test_audit_ledger.py` for the ledger and tamper check.
 
 Remaining: assert "zero ungrounded numbers shipped" as an end-to-end invariant across
 all UI answer paths (today the guarantee is tested at the component level).

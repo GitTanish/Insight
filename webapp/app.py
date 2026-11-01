@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
+from insight import audit
 from insight.briefing import findings_to_dicts, generate_briefing
 from insight.domain.query import AnalysisRequest
 from insight.llm import registry as llm_registry
@@ -337,6 +338,25 @@ def _build_query_context(
         ),
         None,
     )
+
+
+def _audit_kwargs(
+    request: Request,
+    sid: str,
+    context: _QueryContext,
+    session: WebSession,
+    question: str,
+) -> dict:
+    """Identity fields shared by every ledger event for this request."""
+    return {
+        "question": question,
+        "profile": context.profile,
+        "route": request.url.path,
+        "request_id": getattr(request.state, "request_id", None),
+        "session_id": sid,
+        "dataset_generation": context.generation,
+        "uploaded_name": session.uploaded_name,
+    }
 
 
 @app.get("/healthz")
@@ -693,15 +713,31 @@ async def query(
                         analysis_state=final_response.meta.get("analysis_state"),
                         max_turns=get_settings().session_max_turns,
                     )
+                    audit.record_analysis(
+                        final_response,
+                        submitted_approval=analysis_request.approval,
+                        **_audit_kwargs(request, sid, context, session, question),
+                    )
                     yield sse_frame("result", {"html": html})
                 elif etype == "plan_review":
                     # Stops here by design: the user reviews/edits before execution.
+                    audit.record_plan_review(
+                        event.get("plan") or {},
+                        event.get("approval") or {},
+                        **_audit_kwargs(request, sid, context, session, question),
+                    )
                     yield sse_frame("plan_review", event)
                 elif etype == "stage":
                     yield sse_frame("stage", event)
                 else:
                     yield sse_frame(etype, event)
             yield sse_frame("end", {})
+        except Exception as exc:
+            audit.record_failure(
+                exc,
+                **_audit_kwargs(request, sid, context, session, question),
+            )
+            raise
         finally:
             session.end_query()
 
@@ -787,8 +823,35 @@ async def api_query(request: Request):
                 {"error": context_error or "dataset unreadable"}, status_code=400
             )
 
-        if plan_only:
-            # Human-in-the-loop: return the reviewable plan and stop before execution.
+        try:
+            if plan_only:
+                # Human-in-the-loop: return the reviewable plan and stop before execution.
+                async for event in analyze_stream(
+                    context.df,
+                    context.profile,
+                    analysis_request,
+                    artifacts_dir=context.artifacts_dir,
+                    datasets=context.datasets or None,
+                    dataset_generation=context.generation,
+                ):
+                    if event.get("type") == "plan_review":
+                        audit.record_plan_review(
+                            event.get("plan") or {},
+                            event.get("approval") or {},
+                            **_audit_kwargs(request, sid, context, session, question),
+                        )
+                        return JSONResponse(
+                            {
+                                "plan": event["plan"],
+                                "approval": event.get("approval"),
+                            }
+                        )
+                return JSONResponse(
+                    {"error": "planner did not return a reviewable plan"},
+                    status_code=502,
+                )
+
+            response = None
             async for event in analyze_stream(
                 context.df,
                 context.profile,
@@ -797,33 +860,24 @@ async def api_query(request: Request):
                 datasets=context.datasets or None,
                 dataset_generation=context.generation,
             ):
-                if event.get("type") == "plan_review":
-                    return JSONResponse(
-                        {
-                            "plan": event["plan"],
-                            "approval": event.get("approval"),
-                        }
+                if event.get("type") == "result":
+                    response = event["response"]
+                    audit.record_analysis(
+                        response,
+                        submitted_approval=analysis_request.approval,
+                        **_audit_kwargs(request, sid, context, session, question),
                     )
-            return JSONResponse(
-                {"error": "planner did not return a reviewable plan"}, status_code=502
+            if response is None:
+                return JSONResponse(
+                    {"error": "analysis produced no result"}, status_code=500
+                )
+            return JSONResponse(response.model_dump(mode="json"))
+        except Exception as exc:
+            audit.record_failure(
+                exc,
+                **_audit_kwargs(request, sid, context, session, question),
             )
-
-        response = None
-        async for event in analyze_stream(
-            context.df,
-            context.profile,
-            analysis_request,
-            artifacts_dir=context.artifacts_dir,
-            datasets=context.datasets or None,
-            dataset_generation=context.generation,
-        ):
-            if event.get("type") == "result":
-                response = event["response"]
-        if response is None:
-            return JSONResponse(
-                {"error": "analysis produced no result"}, status_code=500
-            )
-        return JSONResponse(response.model_dump(mode="json"))
+            raise
     finally:
         session.end_query()
 

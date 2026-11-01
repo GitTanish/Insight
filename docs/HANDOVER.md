@@ -203,10 +203,19 @@ redirect never waits on it. `findings_status` guards with a `data_id`
 generation check so a slow polish can't clobber a newer upload.
 
 **HITL plan approval**: `INSIGHT_PLAN_APPROVAL=on` (or `plan_only` per request)
-stops after planning, emits `plan_review` with editable JSON; `approved_plan`
-re-validates via `validate_plan_columns` rather than trusting the edit.
+stops after planning, emits `plan_review` with editable JSON and a server-issued
+approval (dataset id, generation, plan hash, issue/expiry). `approved_plan`
+re-validates via `validate_plan_columns` rather than trusting the edit, and the
+webapp/API require an approval matching the current dataset/generation and
+unexpired window; library callers may omit the binding and are marked unbound.
 `analyze()` raises on `plan_only` (it can't express a plan-only outcome).
 `/api/query` drives `analyze_stream` internally for this.
+
+**Evidence ledger**: `INSIGHT_AUDIT_LEDGER=on` appends hash-chained JSONL records
+for plan reviews, completed analyses, and pre-result failures
+(`insight/audit.py`). Verify with `python -m insight.audit`. Writes use a process
+lock plus `flock`/`msvcrt` and `fsync`; a write failure is logged, never fatal to
+the answer. Tail truncation is not detectable without an external head anchor.
 
 **Non-decision - native engine (C++/Rust/Go) was measured and rejected**:
 execution is 14-62ms of a ~30s query (~0.2%), even on 250K rows. A native

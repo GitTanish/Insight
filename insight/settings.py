@@ -63,6 +63,19 @@ class Settings(BaseModel):
             os.getenv("INSIGHT_PLAN_APPROVAL_TTL_MINUTES", "30") or 30
         )
     )
+    # Append-only, hash-chained evidence ledger for plan reviews and analyses.
+    audit_ledger: bool = Field(
+        default_factory=lambda: os.getenv("INSIGHT_AUDIT_LEDGER", "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
+    audit_ledger_path: Path = Field(
+        default_factory=lambda: Path(
+            os.getenv("INSIGHT_AUDIT_LEDGER_PATH", "").strip()
+            or (ROOT_DIR / ".artifacts" / "audit" / "analysis.jsonl")
+        )
+    )
     require_user_key: bool = Field(
         default_factory=lambda: os.getenv("INSIGHT_REQUIRE_USER_KEY", "")
         .strip()
