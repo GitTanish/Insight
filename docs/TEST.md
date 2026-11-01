@@ -209,7 +209,7 @@ To verify whether Insight is *actually correct* rather than merely returning pla
 
 ### Offline Unit & Integration Test Suite (`tests/`)
 
-The repository contains **46 tracked test modules** (`git ls-files "tests/test_*.py"`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 - **never** an absolute test count (see Documentation Discrepancies).
+The repository contains **47 tracked test modules** (`git ls-files "tests/test_*.py"`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 - **never** an absolute test count (see Documentation Discrepancies).
 
 | Test File | What It Actually Exercises | Weaknesses / False-Confidence Risks |
 |---|---|---|
@@ -246,7 +246,7 @@ The repository contains **46 tracked test modules** (`git ls-files "tests/test_*
 | `test_text_streaming.py` | Token-by-token SSE deltas, `first_token_ms`, live typing-bubble rendering, reduced-motion caret | Chunking and browser rendering are stubbed/asserted on markup, not observed live. |
 | `test_prompt_cache.py` | Planner system-prompt byte stability (the prefix-cache prefix), `cache_prompt` flag set, `cached_prompt_tokens` accounting | Uses a stubbed usage block; real provider cache hits not asserted. |
 | `test_hitl_plan_approval.py` | `plan_review` stop (never executes), editable plan payload, approved plan executes without re-planning, approved plan re-validated against the schema, approval bound to dataset/generation/expiry with stale and wrong-dataset rejection, user edits honored, `INSIGHT_PLAN_APPROVAL` forces the gate, plan review never cached, `analyze()` rejects `plan_only`, client controls exist | `analyze()` raising for `plan_only` is by design (it cannot express a plan-only outcome). |
-| `test_audit_ledger.py` | Hash-chained JSONL ledger: dataset/approval/validation/timing capture, plan-review binding, disabled/no-op and write-failure paths, tamper detection, `/api/query` analysis + plan-only records | Single-process test client; concurrent multi-process appends are exercised manually, not in CI. |
+| `test_audit_ledger.py` | Hash-chained JSONL ledger: dataset/approval/validation/timing capture, plan-review binding, disabled/no-op and write-failure paths, tamper detection, torn-tail detection with fail-closed appends, manual truncation recovery, the complete-tail-deletion boundary, `/api/query` analysis + plan-only records | Single-process test client plus a small two-process append probe in `test_durability_harness.py`; larger concurrency runs are manual evidence. |
 | `test_upload_polish.py` | Background briefing polish: deterministic findings without an LLM round-trip, in-place session update, stale-generation guard, pending state in the template | Polishing itself is stubbed. |
 | `test_byok.py` | `X-Insight-Key` header propagation, env fallback, `require_user_key` blocking/allowing | No live key validation. |
 | `test_chain_fallback.py` | `_Chain` failover: 429 throttling fails over before the first token, empty-content response falls through to the next provider, all-providers-down raises `AllProvidersFailedError` with every cause. (Note: the empty-content guard now exempts tool-call-only responses, which is why this still passes in agent mode) | Simulated failures only; no real 429/5xx timing behaviour. |
@@ -257,6 +257,8 @@ The repository contains **46 tracked test modules** (`git ls-files "tests/test_*
 | `test_providers.py` | Provider URL construction, headers, retry backoff, tool-call payload/parse shapes | Mocks HTTP client; does not hit real provider endpoints. |
 | `test_registry.py` | Model catalog, sorting, text-model filtering, custom provider env mapping, NVIDIA NIM provider registration (key env, curated model, endpoint URL), Groq second-account alias (`GROQ_API_KEY2` → `groq2/...` ids), keyless-provider chain exclusion (BYOK keys bypass the gate), `no_fallback` chain pinning | Relies on static catalog definitions. |
 | `test_evaluation.py` | Scoring logic (`_numeric_close`, `_ops_satisfied`) | Tests harness itself, not agent performance. Needs `evaluation/data/`, which is gitignored - CI regenerates it. |
+| `test_bench_harness.py` | Adversarial benchmark schema: deterministic fixtures, clean controls, mutation application, JSONL writing | Fast harness checks only; detection curves come from `evaluation/bench/run_all.py`. |
+| `test_durability_harness.py` | Durability evidence schema: all D-01..D-08 claims exercised with a reduced workload, known-boundary records retained, process settings restored, and the generated report keeps the limitations visible | Reduced concurrency (2 writers x 3 records); the full run is `evaluation/bench/run_durability.py`. |
 
 ---
 
@@ -488,6 +490,10 @@ python evaluation/ab_stats.py --agentic DIR1,DIR2 --baseline DIR3,DIR4
 python tools/mutate.py
 python -m coverage run --branch --source=insight.tools,insight.llm.providers.openai_compat -m pytest tests/test_agentic_tools.py tests/test_agentic_pipeline.py tests/test_agentic_adversarial.py tests/test_agentic_replay.py tests/test_webapp_agentic.py tests/test_chain_fallback.py tests/test_providers.py -q
 python -m coverage report -m
+
+# Durability / fault-injection evidence (writes DURABILITY.md)
+python evaluation/bench/run_durability.py --quick
+python evaluation/bench/run_durability.py --full
 
 # Live SSE smoke (start the app first: uvicorn webapp.app:app --port 8899)
 python tools/sse_smoke.py

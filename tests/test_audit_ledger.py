@@ -4,6 +4,8 @@ import os
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi.testclient import TestClient
@@ -238,6 +240,63 @@ def test_ledger_write_failure_does_not_break_analysis(monkeypatch, tmp_path):
 
     monkeypatch.setattr(audit, "append_event", _boom)
     assert audit.record_analysis(_response(), question="q") is None
+
+
+def test_torn_tail_is_detected_and_blocks_append(monkeypatch, tmp_path):
+    settings = _install(monkeypatch, tmp_path)
+    audit.append_event({"event": "analysis"})
+    audit.append_event({"event": "analysis"})
+
+    with settings.audit_ledger_path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write('{"event": "torn", "seq": 3')
+
+    result = audit.verify_ledger()
+    assert result["ok"] is False
+    assert result["broken_at"] == 3
+    assert "malformed JSON" in result["reason"]
+
+    with pytest.raises(audit.LedgerCorruptError):
+        audit.append_event({"event": "analysis"})
+    assert len(settings.audit_ledger_path.read_text(encoding="utf-8").splitlines()) == 3
+
+
+def test_truncating_torn_tail_restores_append(monkeypatch, tmp_path):
+    settings = _install(monkeypatch, tmp_path)
+    audit.append_event({"event": "analysis"})
+    audit.append_event({"event": "analysis"})
+
+    with settings.audit_ledger_path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write('{"event": "torn", "seq": 3')
+
+    complete = settings.audit_ledger_path.read_text(encoding="utf-8")
+    settings.audit_ledger_path.write_text(
+        complete[: complete.rfind("\n") + 1], encoding="utf-8", newline="\n"
+    )
+
+    recovered = audit.append_event({"event": "analysis"})
+    assert recovered["seq"] == 3
+    result = audit.verify_ledger()
+    assert result["ok"] is True
+    assert result["records"] == 3
+    assert result["head"] == recovered["hash"]
+
+
+def test_complete_tail_deletion_is_not_detectable(monkeypatch, tmp_path):
+    settings = _install(monkeypatch, tmp_path)
+    first = audit.append_event({"event": "analysis"})
+    audit.append_event({"event": "analysis"})
+
+    lines = settings.audit_ledger_path.read_text(encoding="utf-8").splitlines()
+    settings.audit_ledger_path.write_text(
+        "\n".join(lines[:-1]) + "\n", encoding="utf-8", newline="\n"
+    )
+
+    # A truncated tail is indistinguishable from a shorter legitimate ledger
+    # without an externally persisted head. This is a documented boundary.
+    result = audit.verify_ledger()
+    assert result["ok"] is True
+    assert result["records"] == 1
+    assert result["head"] == first["hash"]
 
 
 CSV_BYTES = b"region,revenue\n" + b"".join(
