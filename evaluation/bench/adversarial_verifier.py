@@ -365,7 +365,6 @@ def summarize_adversarial(
     clean_records = [r for r in records if r["trial_kind"] == "clean_control"]
     detect_records = [r for r in records if r["expectation"] == "detect"]
     bypass_records = [r for r in records if r["expectation"] == "known_bypass"]
-    known_gap_records = [r for r in records if r["expectation"] == "known_gap"]
     informational_records = [r for r in records if r["expectation"] == "informational"]
 
     numeric_records = [
@@ -421,7 +420,6 @@ def summarize_adversarial(
         clean_records, lambda record: record["operation"]
     )
     bypass_summary = rate_summary(bypass_records)
-    known_gap_summary = rate_summary(known_gap_records)
     informational_summary = rate_summary(informational_records)
 
     misses = [r for r in detect_records if not r["detected"]]
@@ -527,8 +525,7 @@ def summarize_adversarial(
             "Calculation tampering (test statistics, p-values, effect sizes, "
             "confidence intervals, and model-fit calculations) is rejected.",
             calculation_records,
-            scope="verifiable calculation targets; correlation's "
-            "strongest_correlation is a documented gap",
+            scope="compare_subsets, anova_test, regression, correlation",
         )
     )
     claims.append(
@@ -565,20 +562,16 @@ def summarize_adversarial(
     claims.append(
         {
             "id": "V-06",
-            "statement": "Truncation-flag bypasses, symmetric correlation changes, "
-            "and order-only changes are reported separately and are not counted "
-            "as detections.",
+            "statement": "Truncation-flag bypasses and order-only changes are "
+            "reported separately and are not counted as detections.",
             "scope": "documented trust boundaries",
             "status": "documented",
             "notes": (
                 "A table can set truncated=true to suppress missing-row findings; "
-                "keyed-table row order is treated as presentation-only; a symmetric "
-                "correlation change cannot be checked without recomputing coefficients."
+                "keyed-table row order is treated as presentation-only."
             ),
             "known_bypass_trials": bypass_summary["trials"],
             "known_bypass_detected": bypass_summary["detected"],
-            "known_gap_trials": known_gap_summary["trials"],
-            "known_gap_detected": known_gap_summary["detected"],
             "informational_trials": informational_summary["trials"],
             "informational_detected": informational_summary["detected"],
         }
@@ -601,7 +594,6 @@ def summarize_adversarial(
             "clean_controls": len(clean_records),
             "tamper_trials": len(detect_records),
             "known_bypass_trials": len(bypass_records),
-            "known_gap_trials": len(known_gap_records),
             "informational_trials": len(informational_records),
             "skipped_mutations": len(skipped),
             "skipped_clean_variants": len(skipped_clean),
@@ -623,7 +615,6 @@ def summarize_adversarial(
         "structural_by_operation_variant": structural_by_operation_variant,
         "clean_by_operation": clean_by_operation,
         "known_bypass": bypass_summary,
-        "known_gap": known_gap_summary,
         "informational": informational_summary,
         "validation_propagation": {
             "detected_trials": len(propagated_detections),

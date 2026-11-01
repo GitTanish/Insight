@@ -320,16 +320,13 @@ def build_fixtures(seed: int = DEFAULT_SEED, n: int = DEFAULT_ROWS) -> list[Fixt
             tags=("baseline", "matrix"),
             correlation_targets=(
                 CorrelationTarget("revenue", "score", symmetric_pair=False),
-                CorrelationTarget(
-                    "revenue", "score", symmetric_pair=True, expectation="known_gap"
-                ),
+                CorrelationTarget("revenue", "score", symmetric_pair=True),
                 CorrelationTarget("revenue", "revenue", symmetric_pair=False),
             ),
             calculation_targets=(
                 CalculationTarget(
                     "strongest_correlation",
                     bounds=(-1.0, 1.0),
-                    expectation="known_gap",
                 ),
             ),
         ),

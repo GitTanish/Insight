@@ -82,8 +82,7 @@ def _claim_line(claim: dict) -> str:
     elif claim["id"] == "V-06":
         observed = (
             f"{claim['known_bypass_detected']}/{claim['known_bypass_trials']} bypass "
-            f"detections; {claim['known_gap_detected']}/{claim['known_gap_trials']} "
-            f"known-gap detections; {claim['informational_detected']}/"
+            f"detections; {claim['informational_detected']}/"
             f"{claim['informational_trials']} order-only changes"
         )
     else:
@@ -224,8 +223,8 @@ def render_markdown(
     lines.append("")
     lines.append(
         "Cells show detected/trials for numeric table-cell tampering at each "
-        "relative magnitude. Correlation mutations are single-cell mutations; "
-        "symmetric-pair correlation changes are reported as a known gap."
+        "relative magnitude. Correlation mutations include off-diagonal cells "
+        "and symmetric-pair changes; each mutation is one trial."
     )
     lines.append("")
     header = "| Magnitude | " + " | ".join(f"`{op}`" for op in VERIFIED_OPERATIONS) + " | Total |"
@@ -290,9 +289,7 @@ def render_markdown(
     lines.append(
         f"Known-bypass trials (not counted as detections): "
         f"**{summary['known_bypass']['detected']}/{summary['known_bypass']['trials']}** "
-        "detected. Known correlation gaps: "
-        f"**{summary['known_gap']['detected']}/{summary['known_gap']['trials']}** "
-        "detected by the verifier. Informational order-only trials: "
+        "detected. Informational order-only trials: "
         f"**{summary['informational']['detected']}/{summary['informational']['trials']}** "
         "detected."
     )
@@ -320,11 +317,11 @@ def render_markdown(
         lines.append(
             "The truncation flag is trusted by design: a result can set "
             "`truncated=true` and suppress missing-row findings. This is a "
-            "documented bypass, not a detection success. The correlation "
-            "verifier checks diagonal, symmetry, and structure; a symmetric "
-            "off-diagonal change and the `strongest_correlation` calculation "
-            "are known gaps. The final validator's numeric-sanity check can still "
-            "reject a non-finite value that the verifier misses."
+            "documented bypass, not a detection success. Correlation tables are "
+            "fully recomputed, including symmetric off-diagonal cells and the "
+            "`strongest_correlation` calculation. The final validator's "
+            "numeric-sanity check can still reject a non-finite value that the "
+            "verifier misses."
         )
         lines.append("")
     if summary["harness_errors"]:

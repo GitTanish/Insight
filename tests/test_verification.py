@@ -295,7 +295,106 @@ def test_correlation_asymmetry_detected():
     ], charts=[]))
     fake_execution.steps[0].output.table = tampered
     issues = independently_verify(df, plan, fake_execution)
-    assert any("symmetric" in i.message for i in issues)
+    assert any(
+        "correlation" in i.message and "recomputes" in i.message for i in issues
+    ), [i.message for i in issues]
+
+
+def test_correlation_symmetric_tamper_and_calculation_are_detected():
+    df = pd.DataFrame({"a": [1.0, 2.0, 3.0, 4.0], "b": [3.0, 1.0, 5.0, 2.0]})
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0, operation="correlation", params={"columns": ["a", "b"]}
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    assert independently_verify(df, plan, execution) == []
+
+    table = execution.tables_by_step()[0]
+    a_idx = table.columns.index("a")
+    b_idx = table.columns.index("b")
+    table.rows[0][b_idx] = 0.8
+    table.rows[1][a_idx] = 0.8
+    issues = independently_verify(df, plan, execution)
+    assert any(
+        "correlation" in i.message and "recomputes" in i.message for i in issues
+    ), [i.message for i in issues]
+
+    execution = execute_plan_sync(df, plan)
+    calc = next(
+        c for c in execution.steps[0].output.calculations
+        if c.label == "strongest_correlation"
+    )
+    calc.value = round(float(calc.value) + 0.5, 6)
+    issues = independently_verify(df, plan, execution)
+    assert any("strongest_correlation" in i.message for i in issues), [
+        i.message for i in issues
+    ]
+
+
+def test_correlation_dropped_column_is_detected():
+    df = pd.DataFrame({"a": [1.0, 2.0, 3.0, 4.0], "b": [3.0, 1.0, 5.0, 2.0]})
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0, operation="correlation", params={"columns": ["a", "b"]}
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    table = execution.tables_by_step()[0]
+    index = table.columns.index("b")
+    table.columns.pop(index)
+    for row in table.rows:
+        row.pop(index)
+    issues = independently_verify(df, plan, execution)
+    assert any("column 'b' missing" in i.message for i in issues), [
+        i.message for i in issues
+    ]
+
+
+def test_group_aggregate_duplicate_row_and_dropped_metric_are_detected():
+    df = pd.DataFrame({"g": ["a", "a", "b", "b"], "v": [1.0, 2.0, 3.0, 4.0]})
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0,
+        operation="group_aggregate",
+        params={
+            "group_by": "g",
+            "metrics": [{"column": "v", "agg": "sum", "alias": "total_v"}],
+        },
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    assert independently_verify(df, plan, execution) == []
+
+    table = execution.tables_by_step()[0]
+    table.rows.append(list(table.rows[0]))
+    issues = independently_verify(df, plan, execution)
+    assert any("returned 3 rows, expected 2" in i.message for i in issues), [
+        i.message for i in issues
+    ]
+
+    execution = execute_plan_sync(df, plan)
+    table = execution.tables_by_step()[0]
+    index = table.columns.index("total_v")
+    table.columns.pop(index)
+    for row in table.rows:
+        row.pop(index)
+    issues = independently_verify(df, plan, execution)
+    assert any("column 'total_v' missing" in i.message for i in issues), [
+        i.message for i in issues
+    ]
+
+
+def test_value_counts_nonfinite_proportion_is_detected():
+    df = pd.DataFrame({"category": ["a", "a", "b", "c"]})
+    plan = AnalysisPlan(objective="t", steps=[PlanStep(
+        step_id=0,
+        operation="value_counts",
+        params={"column": "category", "normalize": True},
+    )], charts=[])
+    execution = execute_plan_sync(df, plan)
+    assert independently_verify(df, plan, execution) == []
+
+    table = execution.tables_by_step()[0]
+    table.rows[0][table.columns.index("proportion")] = float("nan")
+    issues = independently_verify(df, plan, execution)
+    assert any("proportion" in i.message for i in issues), [
+        i.message for i in issues
+    ]
 
 
 def test_regression_recomputation_verifies_and_catches_tamper():
