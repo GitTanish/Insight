@@ -51,8 +51,8 @@
         <details class="card">
             <summary>Provider status</summary>
             {% for p in providers %}
-                <div class="provider-row">{{ p.dot }} {{ p.name }}
-                    <span class="provider-note">— {{ p.state }}</span>
+                <div class="provider-row"><span class="provider-dot provider-{{ p.status }}" aria-hidden="true"></span>{{ p.name }}
+                    <span class="provider-note">: {{ p.state }}</span>
                 </div>
             {% endfor %}
         </details>

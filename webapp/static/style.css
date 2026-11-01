@@ -27,6 +27,8 @@
 
 * { box-sizing: border-box; }
 
+[hidden] { display: none !important; }
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {
@@ -269,6 +271,20 @@ details.evidence > *:not(summary) { padding: 0 0.7rem; }
 .fingerprint b { color: var(--ink-black); }
 .provider-row { font-family: 'Courier Prime', monospace; font-size: 0.76rem; padding: 2px 0.7rem; }
 .provider-note { color: var(--ink-gray); font-size: 0.68rem; }
+.provider-dot {
+    display: inline-block;
+    width: 0.55rem;
+    height: 0.55rem;
+    margin-right: 0.3rem;
+    border: 1px solid var(--ink-black);
+    border-radius: 50%;
+    vertical-align: middle;
+}
+.provider-dot.provider-on {
+    background-color: var(--newspaper-red);
+    border-color: var(--newspaper-red);
+}
+.provider-dot.provider-off { background-color: transparent; }
 
 .drop-cap::first-letter {
     font-family: 'Playfair Display', serif;

@@ -8,8 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 st.set_page_config(
-    page_title="Insight — AI Data Analysis",
-    page_icon="📊",
+    page_title="Insight - AI Data Analysis",
     layout="wide",
     initial_sidebar_state="expanded",
 )

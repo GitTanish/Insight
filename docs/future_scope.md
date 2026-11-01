@@ -7,22 +7,22 @@ Status as of 2026-10-13. Shipped since v2.0: evaluation harness, statistics dept
 Recently: token-by-token answer streaming, prefix-cached planner prompts,
 cache on the SSE path, background briefing polish, and human-in-the-loop plan
 approval (`INSIGHT_PLAN_APPROVAL=on`). Latest: **agentic tool-use mode**
-(`INSIGHT_AGENTIC` — ops as tools, bounded observe/plan/act/refine loop over the
+(`INSIGHT_AGENTIC` - ops as tools, bounded observe/plan/act/refine loop over the
 same verified pipeline) and the **alert-runner companion worker**
 (`tools/alert_runner.py`).
-A Python code-interpreter sandbox was explicitly skipped by the owner — DuckDB
+A Python code-interpreter sandbox was explicitly skipped by the owner - DuckDB
 covers the analytical surface safely.
 
 ## Completed in v2.x (for reference)
 
-1. **Automatic dataset profiling** — shipped as the profiler + zero-prompt briefing.
-2. **Tool-based statistical analysis** — shipped as the deterministic op registry
+1. **Automatic dataset profiling** - shipped as the profiler + zero-prompt briefing.
+2. **Tool-based statistical analysis** - shipped as the deterministic op registry
    (15 ops incl. DuckDB SQL): the LLM plans, pandas/scipy/DuckDB compute.
-3. **Persistent session memory** — partially shipped: conversation state machine
+3. **Persistent session memory** - partially shipped: conversation state machine
    persists analytical scope across turns; webapp sessions remain in-memory.
-4. **Multi-file reasoning** — shipped for CSV sets (DuckDB joins); native SQLite/
+4. **Multi-file reasoning** - shipped for CSV sets (DuckDB joins); native SQLite/
    PostgreSQL connectors still open below.
-5. **Human-in-the-loop** — shipped: every plan is reviewable and editable before
+5. **Human-in-the-loop** - shipped: every plan is reviewable and editable before
    execution; approved plans are re-validated against the schema.
 
 ## Next up
@@ -41,35 +41,35 @@ Today listwise deletion assumes MCAR and the validator says so explicitly.
 Next: detect MAR/MNAR signals per column and recommend imputation or exclusion
 policies before aggregates are computed.
 
-### 4. ~~Streaming-path caching~~ — shipped
+### 4. ~~Streaming-path caching~~ - shipped
 The query-result cache now serves the SSE path too (~0.23-0.39s repeats vs
 7.8s cold). Remaining work here is only cache-hit UI polish, not the plumbing.
 
-### 5. ~~Alert-runner reference implementation~~ — shipped
+### 5. ~~Alert-runner reference implementation~~ - shipped
 `tools/alert_runner.py` runs exported monitor JSONs on a schedule through the
 same sandboxed DuckSession and posts Slack-compatible payloads on threshold
 state-change (see README "Alert runner").
 
-### 6. Agentic mode — shipped; A/B measured on one endpoint
+### 6. Agentic mode - shipped; A/B measured on one endpoint
 `INSIGHT_AGENTIC` routes questions through the tool-calling loop
 (`insight/tools/`) with the same verification tail. Pinned k=3 A/B on NVIDIA
 NIM `gpt-oss-20b` (2026-10-16, `--no-fallback`, same 20 cases/grader, production
 budget 5/9) measured agentic **58/60 (96.7%, 95% CI 88.6–99.1)** vs single-shot
-**43/60 (71.7%, 59.2–81.5)** at mean 2.17 vs 2.36 `llm_calls` — but the
+**43/60 (71.7%, 59.2–81.5)** at mean 2.17 vs 2.36 `llm_calls` - but the
 2026-10-17 diagnosis showed most of that gap was a provider-side truncation bug
 that only hit the single-shot planner (13 of 17 baseline failures), fixed the
 same day; post-fix k=1 confirmations score 20/20 vs 19/20, i.e. **accuracy
-parity on this endpoint — the agentic value is the auditable tool trail**. The
+parity on this endpoint - the agentic value is the auditable tool trail**. The
 first live runs found and fixed an OpenAI wire-format bug that no offline fake
 could reach; env-var provider pinning proved unreliable on Windows, so a
 `--no-fallback` flag makes live runs provable. Offline assurance: 11/11 sampled
 mutations killed, `loop.py` 96% branch coverage (see TEST.md "Verification
-evidence"). Next: repeat the pinned A/B on a second endpoint (Groq) — more
+evidence"). Next: repeat the pinned A/B on a second endpoint (Groq) - more
 important now that the first endpoint's gap collapsed, and re-measure k≥3
-post-fix — and test whether a System One op-classifier router can cut calls
+post-fix - and test whether a System One op-classifier router can cut calls
 further (the `OperationRouter` seam is in place). The
 `sup_chat_vs_email_resolution` failure was diagnosed: a gpt-oss harmony-token
-leak into tool names (fixed — inbound names are sanitized; post-fix pinned run
+leak into tool names (fixed - inbound names are sanitized; post-fix pinned run
 20/20); the residual pattern is the model short-circuiting past the required
 test op on that one case.
 
@@ -79,16 +79,16 @@ PDF export, dashboards.
 
 ## Measured non-decisions (do not revisit without new data)
 
-### Native execution engine (C++ / Rust / Go) — rejected on measurement
+### Native execution engine (C++ / Rust / Go) - rejected on measurement
 Profiling a ~30s question: the deterministic engine is **14-62ms** (≈0.2%),
 while planning + explaining (LLM) is 95%+. Execution already handles 250K rows
-with joins, OLS and charts. A Rust/C++ core would save ~55ms per query — under
-0.2% — in exchange for an FFI/build-toolchain tax. The win is in the LLM calls:
+with joins, OLS and charts. A Rust/C++ core would save ~55ms per query - under
+0.2% - in exchange for an FFI/build-toolchain tax. The win is in the LLM calls:
 prefix caching, fewer planning round-trips, and streaming (all shipped).
 A native layer becomes worth revisiting only if execution ever dominates, e.g.
 10M+ rows with heavy per-group work.
 
-### Ground-truth-dependent validator tuning — blocked, not declined
+### Ground-truth-dependent validator tuning - blocked, not declined
 The validator rejects roughly half of first-pass plans, costing a full extra LLM
 round-trip (up to ~190s observed). `meta.repair_issues` now records the exact
 rejection reasons, but tuning validation against them needs live provider runs

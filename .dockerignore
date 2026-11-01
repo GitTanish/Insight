@@ -30,7 +30,6 @@ tests/test_byok.py
 tests/test_chain_fallback.py
 tests/test_custom_provider.py
 tests/test_invariants.py
-TEST.md
 *.log
 temp/
 tmp/

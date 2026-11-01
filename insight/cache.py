@@ -16,6 +16,10 @@ from insight.domain.query import AnalysisRequest
 from insight.domain.visualization import AnalysisResponse
 from insight.settings import get_settings
 
+# Bump when response shape or rendering changes so old entries are ignored
+# instead of serving stale chart images or narration.
+_CACHE_SCHEMA_VERSION = "render=2"
+
 
 def normalize_question(question: str) -> str:
     return " ".join(question.lower().split())
@@ -59,6 +63,7 @@ def cache_key_for(
         f"{temperature:.3f}",
         _scope_signature(state),
         f"agentic={bool(agentic)}",
+        _CACHE_SCHEMA_VERSION,
     ])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
