@@ -166,3 +166,43 @@ def test_explainer_failure_records_fallback_reason(
     assert response.answer.startswith("**Analysis complete.**")
     assert response.meta["answer_fallback"] is True
     assert "rate limited by provider" in response.meta["explainer_error"]
+
+
+def test_non_agentic_explainer_honors_call_delay(
+    stub_chain_factory, sales_df, profile, tmp_path, monkeypatch
+):
+    import insight.orchestrator as orch
+    from insight.settings import get_settings
+
+    monkeypatch.setenv("INSIGHT_AGENTIC_DELAY_S", "0.05")
+    get_settings.cache_clear()
+
+    events: list[tuple[str, float | None]] = []
+    real_sleep = orch.asyncio.sleep
+
+    async def fake_sleep(delay):
+        events.append(("sleep", delay))
+        await real_sleep(0)
+
+    monkeypatch.setattr(orch.asyncio, "sleep", fake_sleep)
+    llm = stub_chain_factory([VALID_PLAN, EXPLANATION])
+    original_generate = llm.generate
+
+    async def generate(request):
+        events.append(("generate", None))
+        return await original_generate(request)
+
+    llm.generate = generate
+
+    try:
+        response = run_analysis_sync(
+            sales_df,
+            profile,
+            AnalysisRequest(question="Which region has the highest revenue?"),
+            artifacts_dir=tmp_path,
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert response.error is None
+    assert events == [("generate", None), ("sleep", 0.05), ("generate", None)]

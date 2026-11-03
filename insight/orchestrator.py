@@ -1118,6 +1118,11 @@ async def analyze_stream(
             finally:
                 repair_ms += int((time.monotonic() - t_repair) * 1000)
 
+    # The explainer is another provider call. In non-agentic mode there is no
+    # loop budget to space calls, so honor the same delay before the tail.
+    if settings.agentic_call_delay_s > 0:
+        await asyncio.sleep(settings.agentic_call_delay_s)
+
     async for event in _tail_events(_TailCtx(
         df=df,
         profile=profile,

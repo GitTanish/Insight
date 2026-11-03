@@ -394,7 +394,7 @@ File limits: up to 1,000,000 rows per table (`INSIGHT_MAX_UPLOAD_ROWS`) · CSV (
 | `INSIGHT_AGENTIC` | `off` | default question mode: agentic tool-calling loop instead of the single-shot planner (per-question override in both UIs) |
 | `INSIGHT_AGENTIC_MAX_ITERATIONS` | `5` | max model turns per agentic question |
 | `INSIGHT_AGENTIC_MAX_LLM_CALLS` | `9` | hard cap on provider calls per agentic question |
-| `INSIGHT_AGENTIC_DELAY_S` | `0` | seconds between agentic provider calls (throttle headroom on free tiers) |
+| `INSIGHT_AGENTIC_DELAY_S` | `0` | seconds between provider calls, including agentic loop calls and the final explainer (throttle headroom on free tiers) |
 | `INSIGHT_REQUIRE_USER_KEY` | `off` | BYOK mode: every query must carry the user's own provider key (`x-insight-key` header / `api_key` body); requests without one get a 401 |
 | `INSIGHT_AUTH_TOKEN` | - | require Bearer auth (API) or the `/auth?token=...` browser cookie on every non-health route |
 | `INSIGHT_TRUST_PROXY_AUTH` | `off` | trust `X-Forwarded-User` from an authenticating reverse proxy instead of the shared token |
