@@ -400,6 +400,8 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
     t_explain = time.monotonic()
     answer_chunks: list[str] = []
     first_token_ms: Optional[int] = None
+    answer_fallback = False
+    explainer_error: Optional[str] = None
     with trace_phase("explainer.compose"):
         try:
             async for delta in chain.stream(explainer_request):
@@ -411,8 +413,12 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
                 yield {"type": "delta", "text": delta}
             answer = "".join(answer_chunks).strip()
             if not answer:
+                answer_fallback = True
+                explainer_error = "empty explainer response"
                 answer = _fallback_answer(validation, execution)
-        except InsightError:
+        except InsightError as exc:
+            answer_fallback = True
+            explainer_error = str(getattr(exc, "message", exc))[:300]
             answer = _fallback_answer(validation, execution)
     explaining_ms = int((time.monotonic() - t_explain) * 1000)
 
@@ -523,6 +529,8 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
         "grounding_retry_ms": grounding_retry_ms,
         "first_token_ms": first_token_ms,
         "explaining_ms": explaining_ms,
+        "answer_fallback": answer_fallback,
+        "explainer_error": explainer_error,
         "execution_ms": execution.duration_ms,
         "total_ms": int((time.monotonic() - ctx.started) * 1000),
         "tokens_in": chain.tokens_in,
@@ -908,6 +916,13 @@ async def analyze_stream(
             "valid": validation.valid,
             "warning_count": len(validation.warnings),
         }
+
+        # The explainer is another provider call. When call spacing is
+        # configured (e.g. to stay inside a provider's tokens-per-minute
+        # budget), let the last loop call age out of the rate window before
+        # asking for the narrative.
+        if settings.agentic_call_delay_s > 0:
+            await asyncio.sleep(settings.agentic_call_delay_s)
 
         async for event in _tail_events(_TailCtx(
             df=df,

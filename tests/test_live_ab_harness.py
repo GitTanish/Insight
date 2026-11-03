@@ -42,7 +42,7 @@ def _frames():
     return {"data.csv": (pd.DataFrame({"region": ["West"], "value": [1]}), None)}
 
 
-def _response(request):
+def _response(request, *, answer_fallback: bool = False):
     return AnalysisResponse(
         question=request.question,
         answer="West leads.",
@@ -56,6 +56,8 @@ def _response(request):
             "completion_tokens": 4,
             "grounding_retry_ms": 0,
             "unverified_figures": [],
+            "answer_fallback": answer_fallback,
+            "explainer_error": "rate limited" if answer_fallback else None,
             "agentic": bool(request.agentic),
             "agentic_throttled": False,
             "steps": [{"operation": "group_aggregate", "success": True}],
@@ -100,6 +102,7 @@ def test_live_ab_runs_all_arms_and_restores_settings(tmp_path):
         "failed": 0,
         "throttled": 0,
         "errors": 0,
+        "fallbacks": 0,
         "missing": 0,
     }
     assert summary["status"] == "ok"
@@ -110,6 +113,37 @@ def test_live_ab_runs_all_arms_and_restores_settings(tmp_path):
     assert settings.agentic_call_delay_s == before["agentic_call_delay_s"]
     assert all(arm["complete"] for arm in summary["arms"])
     assert {claim["id"] for claim in summary["claims"]} == {"A-01", "A-02", "A-03", "A-04"}
+
+
+def test_narrative_fallback_is_telemetred_and_marks_attention(tmp_path):
+    def runner(df, profile, request, artifacts_dir):
+        return _response(request, answer_fallback=request.agentic)
+
+    records, summary = run_live_ab(
+        run_id="fallback-run",
+        config=LiveConfig(
+            model_id="test/model",
+            repetitions=1,
+            delay_s=0,
+            no_fallback=True,
+        ),
+        arms=(DEFAULT_ARMS[0], DEFAULT_ARMS[1]),
+        out_dir=tmp_path,
+        cases=[CASE],
+        frames=_frames(),
+        runner=runner,
+    )
+
+    by_arm = {record["arm_id"]: record for record in records}
+    assert by_arm["agentic"]["answer_fallback"] is True
+    assert by_arm["agentic"]["explainer_error"] == "rate limited"
+    assert by_arm["baseline"]["answer_fallback"] is False
+    assert summary["counts"]["fallbacks"] == 1
+    assert summary["status"] == "attention"
+    assert {arm["arm_id"]: arm["answer_fallbacks"] for arm in summary["arms"]} == {
+        "baseline": 0,
+        "agentic": 1,
+    }
 
 
 def test_live_ab_resume_skips_completed_trials(tmp_path):
@@ -374,6 +408,7 @@ def test_combine_runs_pools_disjoint_quota_split_runs(tmp_path):
         "failed": 0,
         "throttled": 0,
         "errors": 0,
+        "fallbacks": 0,
         "missing": 0,
     }
     assert summary["status"] == "ok"

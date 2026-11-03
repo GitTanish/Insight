@@ -226,6 +226,9 @@ def combine_runs(
         "failed": sum(1 for record in records if not record["passed"]),
         "throttled": sum(1 for record in records if record.get("throttled")),
         "errors": sum(1 for record in records if record.get("error")),
+        "fallbacks": sum(
+            1 for record in records if record.get("answer_fallback")
+        ),
     }
     counts["missing"] = counts["expected"] - counts["records"]
     trial_errors = [
@@ -286,6 +289,7 @@ def combine_runs(
         and counts["errors"] == 0
         and not trial_errors
         and counts["throttled"] == 0
+        and counts["fallbacks"] == 0
         and all(entry["status"] == "ok" for entry in source_entries)
         and all(arm_summary["complete"] for arm_summary in arm_summaries)
         else "attention"

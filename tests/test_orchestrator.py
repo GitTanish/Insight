@@ -136,3 +136,33 @@ def test_explainer_receives_rendered_figure_list(stub_chain_factory, sales_df, p
 
     system_content = explainer_call.messages[0].content
     assert "ONLY figures listed" in system_content
+
+
+def test_explainer_failure_records_fallback_reason(
+    stub_chain_factory, sales_df, profile, tmp_path
+):
+    from insight.domain.errors import InsightError
+
+    llm = stub_chain_factory([VALID_PLAN, EXPLANATION])
+    original_generate = llm.generate
+    calls = 0
+
+    async def generate_then_fail(request):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise InsightError("rate limited by provider")
+        return await original_generate(request)
+
+    llm.generate = generate_then_fail
+
+    response = run_analysis_sync(
+        sales_df,
+        profile,
+        AnalysisRequest(question="Which region has the highest revenue?"),
+        artifacts_dir=tmp_path,
+    )
+
+    assert response.answer.startswith("**Analysis complete.**")
+    assert response.meta["answer_fallback"] is True
+    assert "rate limited by provider" in response.meta["explainer_error"]

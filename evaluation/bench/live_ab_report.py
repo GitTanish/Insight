@@ -125,10 +125,11 @@ def render_live_ab_markdown(
     lines.append(
         "| Claim | Arm | Scope | Passed / trials | Wilson 95% | "
         "Validation valid | Guard-reported unverified | Post-hoc unverified | "
-        "Grounding retries | Mean calls | Mean wall | Throttled |"
+        "Grounding retries | Narrative fallbacks | Mean calls | Mean wall | "
+        "Throttled |"
     )
     lines.append(
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     )
     claim_by_arm = {claim["arm_id"]: claim for claim in summary["claims"]}
     for arm in arms:
@@ -140,6 +141,7 @@ def render_live_ab_markdown(
             f"{arm.get('unverified_cases')}/{arm['trials']} | "
             f"{arm.get('posthoc_unverified_cases')}/{arm['trials']} | "
             f"{arm.get('grounding_retries')}/{arm['trials']} | "
+            f"{arm.get('answer_fallbacks', 0)}/{arm['trials']} | "
             f"{arm.get('mean_llm_calls')} | {arm.get('mean_wall_s')} s | "
             f"{arm.get('throttled')} |"
         )
@@ -206,6 +208,7 @@ def render_live_ab_markdown(
     lines.append(f"| Missing trials | `{counts.get('missing')}` |")
     lines.append(f"| Passed / failed | `{counts.get('passed')}` / `{counts.get('failed')}` |")
     lines.append(f"| Throttled trials | `{counts.get('throttled')}` |")
+    lines.append(f"| Narrative fallbacks | `{counts.get('fallbacks')}` |")
     lines.append(f"| Error trials | `{counts.get('errors')}` |")
     lines.append(f"| Trial errors | `{len(summary.get('trial_errors', []))}` |")
     lines.append(f"| Status | `{summary.get('status')}` |")
@@ -260,8 +263,15 @@ def render_live_ab_markdown(
         lines.append(f"- Provider quota at run time: {config['quota_note']}.")
     lines.append(
         "- Repetitions are sequential and may be throttled by provider quota. "
-        "`--delay` spaces cases, not provider calls inside a case. A throttled "
-        "or error trial is kept as a failure; it is not retried away."
+        "`--delay` spaces cases and agentic provider calls, including before "
+        "the explainer. A throttled or error trial is kept as a failure; it is "
+        "not retried away."
+    )
+    lines.append(
+        "- A narrative fallback means the production explainer failed and the "
+        "deterministic summary answered instead. Such trials are marked in the "
+        "arm table and make the run status `attention`; they are not clean "
+        "evidence for narrative or grounding comparisons."
     )
     lines.append(
         "- The no-verifier arm disables only `independently_verify`. The rest of "

@@ -138,6 +138,8 @@ class Settings(BaseModel):
     agentic_max_llm_calls: int = Field(
         default_factory=lambda: int(os.getenv("INSIGHT_AGENTIC_MAX_LLM_CALLS", "9") or 9)
     )
+    # Spacing between agentic provider calls, including the final explainer
+    # call. 0 = no added delay. Useful for provider rate limits (e.g. TPM).
     agentic_call_delay_s: float = Field(
         default_factory=lambda: float(os.getenv("INSIGHT_AGENTIC_DELAY_S", "0") or 0)
     )

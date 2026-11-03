@@ -252,6 +252,8 @@ def _safe_trial(
         "unverified_figures": unverified,
         "posthoc_unverified": posthoc,
         "grounding_retry_ms": meta.get("grounding_retry_ms"),
+        "answer_fallback": bool(meta.get("answer_fallback")),
+        "explainer_error": meta.get("explainer_error"),
         "llm_calls": llm_calls,
         "agentic_llm_calls": meta.get("agentic_llm_calls"),
         "agentic_iterations": meta.get("agentic_iterations"),
@@ -400,6 +402,9 @@ def summarize_arm(arm: Arm, records: Sequence[dict], expected: int) -> dict[str,
         "unverified_cases": unverified_cases,
         "posthoc_unverified_cases": posthoc_cases,
         "grounding_retries": grounding_retries,
+        "answer_fallbacks": sum(
+            1 for record in arm_records if record.get("answer_fallback")
+        ),
         "mean_llm_calls": _mean(record.get("llm_calls") for record in arm_records),
         "total_prompt_tokens": sum(
             record.get("prompt_tokens") or 0 for record in arm_records
@@ -618,6 +623,9 @@ def run_live_ab(
         "failed": sum(1 for record in all_records if not record["passed"]),
         "throttled": sum(1 for record in all_records if record.get("throttled")),
         "errors": sum(1 for record in all_records if record.get("error")),
+        "fallbacks": sum(
+            1 for record in all_records if record.get("answer_fallback")
+        ),
     }
     counts["missing"] = counts["expected"] - counts["records"]
     trial_errors = [
@@ -681,6 +689,7 @@ def run_live_ab(
             and counts["errors"] == 0
             and not trial_errors
             and counts["throttled"] == 0
+            and counts["fallbacks"] == 0
             and all(summary["complete"] for summary in arm_summaries)
             else "attention"
         ),
