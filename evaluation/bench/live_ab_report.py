@@ -68,10 +68,18 @@ def render_live_ab_markdown(
     lines.append(f"| Python | `{manifest.get('environment', {}).get('python')}` |")
     lines.append(f"| Platform | {_cell(manifest.get('environment', {}).get('platform'))} |")
     lines.append(f"| Model | `{config.get('model_id')}` |")
+    if config.get("underlying_model") and config["underlying_model"] != config.get(
+        "model_id"
+    ):
+        lines.append(f"| Underlying model | `{config['underlying_model']}` |")
+    aliases = config.get("provider_aliases") or []
+    if len(aliases) > 1:
+        lines.append(f"| Provider aliases | `{', '.join(aliases)}` |")
     lines.append(f"| Pinned (no fallback) | `{config.get('no_fallback')}` |")
     lines.append(f"| Cases | `{config.get('case_count')}` |")
     lines.append(f"| Repetitions per arm | `{config.get('repetitions')}` |")
-    lines.append(f"| Inter-case delay | `{config.get('delay_s')} s` |")
+    delay_text = config.get("delay_note") or f"{config.get('delay_s')} s"
+    lines.append(f"| Inter-case delay | `{delay_text}` |")
     if config.get("quota_note"):
         lines.append(f"| Provider quota | {_cell(config['quota_note'], 200)} |")
     lines.append(f"| Raw records | `{raw_path}` |")
@@ -86,6 +94,31 @@ def render_live_ab_markdown(
         "defaults."
     )
     lines.append("")
+
+    source_runs = summary.get("source_runs") or []
+    if source_runs:
+        lines.append("## Source runs")
+        lines.append("")
+        lines.append(
+            "| Run ID | Commit | Cases | Trials | Status | Raw records |"
+        )
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for source in source_runs:
+            commit = (source.get("commit") or "unknown")[:12]
+            lines.append(
+                f"| `{source.get('run_id')}` | `{commit}` | "
+                f"{source.get('case_count')} | "
+                f"{source.get('records')}/{source.get('expected')} | "
+                f"`{source.get('status')}` | "
+                f"`{_cell(source.get('records_path'), 100)}` |"
+            )
+        lines.append("")
+        lines.append(
+            "Arms are paired only within a source run; the pooled counts below "
+            "reuse the same trial fields. Each source run's manifest and raw "
+            "records remain the evidence for its own trials."
+        )
+        lines.append("")
 
     lines.append("## Arm summary")
     lines.append("")
@@ -251,6 +284,13 @@ def render_live_ab_markdown(
         "`run_eval_agentic.py` telemetry runs. Raw answers and provider "
         "telemetry are internal evidence and stay under `.artifacts/`."
     )
+    if source_runs:
+        lines.append(
+            f"- This report pools {len(source_runs)} independent quota-split "
+            "runs. The pooled pass rate is not a single-run estimate, and the "
+            "source runs may have used different provider accounts or days. "
+            "Use the source manifests to audit each run separately."
+        )
     lines.append("")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
