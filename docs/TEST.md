@@ -209,7 +209,7 @@ To verify whether Insight is *actually correct* rather than merely returning pla
 
 ### Offline Unit & Integration Test Suite (`tests/`)
 
-The repository contains **48 tracked test modules** (`git ls-files "tests/test_*.py"`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 - **never** an absolute test count (see Documentation Discrepancies).
+The repository contains **49 tracked test modules** (`git ls-files "tests/test_*.py"`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 - **never** an absolute test count (see Documentation Discrepancies).
 
 | Test File | What It Actually Exercises | Weaknesses / False-Confidence Risks |
 |---|---|---|
