@@ -10,6 +10,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from evaluation.bench.combine_live_ab import combine_runs, load_source_run
 from evaluation.bench.live_ab import (
     DEFAULT_ARMS,
     Arm,
@@ -21,6 +22,7 @@ from evaluation.bench.live_ab import (
     summarize_arm,
 )
 from evaluation.bench.live_ab_report import render_live_ab_markdown
+from evaluation.bench.schema import write_json
 from insight.domain.visualization import AnalysisResponse, Evidence, ValidationResult
 from insight.settings import get_settings
 
@@ -33,6 +35,7 @@ CASE = {
     "answer_contains": ["West"],
     "numeric_expect": [],
 }
+CASE_B = {**CASE, "id": "case_b", "question": "Which region trails?"}
 
 
 def _frames():
@@ -317,3 +320,119 @@ def test_report_renders_arms_comparisons_and_limits(tmp_path):
     assert "`agentic_no_grounding`" in text
     assert "8k TPM, 200k TPD" in text
     assert "Post-hoc unverified" in text
+
+
+def _make_source_run(tmp_path, name, case, model_id):
+    run_dir = tmp_path / name
+    records, summary = run_live_ab(
+        run_id=name,
+        config=LiveConfig(
+            model_id=model_id,
+            repetitions=1,
+            delay_s=0,
+            no_fallback=True,
+        ),
+        arms=(DEFAULT_ARMS[0], DEFAULT_ARMS[1]),
+        out_dir=run_dir,
+        cases=[case],
+        frames=_frames(),
+        runner=lambda df, profile, request, artifacts_dir: _response(request),
+    )
+    write_json(run_dir / "summary.json", summary)
+    write_json(
+        run_dir / "manifest.json",
+        {
+            "run_id": name,
+            "started_at": "2026-11-03T00:00:00Z",
+            "finished_at": "2026-11-03T00:01:00Z",
+            "git": {"commit": "b" * 40, "branch": "test"},
+            "artifacts": {},
+        },
+    )
+    return run_dir
+
+
+def test_combine_runs_pools_disjoint_quota_split_runs(tmp_path):
+    dir_a = _make_source_run(tmp_path, "run-a", CASE, "groq/openai/gpt-oss-20b")
+    dir_b = _make_source_run(tmp_path, "run-b", CASE_B, "groq2/openai/gpt-oss-20b")
+    sources = [load_source_run(dir_a), load_source_run(dir_b)]
+
+    records, summary = combine_runs(
+        sources, run_id="combined", model_label="openai/gpt-oss-20b"
+    )
+
+    assert len(records) == 4
+    assert summary["run_id"] == "combined"
+    assert summary["config"]["model_id"] == "openai/gpt-oss-20b"
+    assert summary["config"]["underlying_model"] == "openai/gpt-oss-20b"
+    assert summary["config"]["provider_aliases"] == ["groq", "groq2"]
+    assert summary["config"]["case_count"] == 2
+    assert summary["counts"] == {
+        "expected": 4,
+        "records": 4,
+        "passed": 4,
+        "failed": 0,
+        "throttled": 0,
+        "errors": 0,
+        "missing": 0,
+    }
+    assert summary["status"] == "ok"
+    assert all(arm["trials"] == 2 for arm in summary["arms"])
+    assert summary["comparisons"][0]["paired_trials"] == 2
+    assert set(summary["trial_matrix"]) == {"case_a", "case_b"}
+    assert len(summary["source_runs"]) == 2
+
+    manifest = {
+        "run_id": "combined",
+        "started_at": "2026-11-03T00:00:00Z",
+        "finished_at": "2026-11-03T00:02:00Z",
+        "git": {"commit": "c" * 40, "branch": "test", "dirty": False},
+        "environment": {"python": "3.11.9", "platform": "test"},
+        "artifacts": {"manifest": {"path": "raw/manifest.json"}},
+    }
+    report_path = tmp_path / "LIVE_AB.md"
+    render_live_ab_markdown(
+        summary,
+        manifest,
+        records,
+        raw_path="raw/live_trials.jsonl",
+        output_path=report_path,
+        root=tmp_path,
+    )
+    text = report_path.read_text(encoding="utf-8")
+    assert "## Source runs" in text
+    assert "quota-split" in text
+    assert "groq, groq2" in text
+    assert "openai/gpt-oss-20b" in text
+
+
+def test_combine_rejects_overlapping_cases(tmp_path):
+    dir_a = _make_source_run(tmp_path, "dup-a", CASE, "groq/openai/gpt-oss-20b")
+    dir_b = _make_source_run(tmp_path, "dup-b", CASE, "groq2/openai/gpt-oss-20b")
+    with pytest.raises(ValueError, match="overlapping case"):
+        combine_runs(
+            [load_source_run(dir_a), load_source_run(dir_b)],
+            run_id="combined",
+            model_label="openai/gpt-oss-20b",
+        )
+
+
+def test_combine_requires_a_label_for_provider_aliases(tmp_path):
+    dir_a = _make_source_run(tmp_path, "alias-a", CASE, "groq/openai/gpt-oss-20b")
+    dir_b = _make_source_run(tmp_path, "alias-b", CASE_B, "groq2/openai/gpt-oss-20b")
+    with pytest.raises(ValueError, match="different provider aliases"):
+        combine_runs(
+            [load_source_run(dir_a), load_source_run(dir_b)],
+            run_id="combined",
+        )
+
+
+def test_combine_rejects_different_models(tmp_path):
+    dir_a = _make_source_run(tmp_path, "model-a", CASE, "groq/openai/gpt-oss-20b")
+    dir_b = _make_source_run(tmp_path, "model-b", CASE_B, "groq/other/model")
+    with pytest.raises(ValueError, match="different models"):
+        combine_runs(
+            [load_source_run(dir_a), load_source_run(dir_b)],
+            run_id="combined",
+            model_label="shared",
+        )
