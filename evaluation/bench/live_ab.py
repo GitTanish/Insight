@@ -76,6 +76,7 @@ class LiveConfig:
     no_fallback: bool = True
     case_ids: tuple[str, ...] = ()
     limit: int = 0
+    quota_note: str = ""
 
 
 Runner = Callable[[pd.DataFrame, Any, AnalysisRequest, Path], AnalysisResponse]
@@ -124,6 +125,11 @@ def run_signature(config: LiveConfig, arms: Sequence[Arm], cases: Sequence[dict]
         "repetitions": config.repetitions,
         "no_fallback": config.no_fallback,
         "case_ids": [case["id"] for case in cases],
+        "cases_sha256": hashlib.sha256(
+            json.dumps(list(cases), sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest(),
         "arms": [
             {
                 "id": arm.arm_id,
@@ -180,6 +186,11 @@ def _safe_trial(
     validation_errors = (
         [issue.message for issue in validation.errors] if validation is not None else []
     )
+    validation_warnings = (
+        [issue.message for issue in validation.warnings]
+        if validation is not None
+        else []
+    )
     validation_valid = meta.get("validation_valid")
     if validation_valid is None and validation is not None:
         validation_valid = validation.valid
@@ -234,10 +245,16 @@ def _safe_trial(
         "answer_chars": len(response.answer) if response is not None else None,
         "validation_valid": validation_valid,
         "validation_errors": validation_errors,
+        "validation_warnings": validation_warnings,
+        "validation_checks_run": (
+            list(validation.checks_run) if validation is not None else []
+        ),
         "unverified_figures": unverified,
         "posthoc_unverified": posthoc,
         "grounding_retry_ms": meta.get("grounding_retry_ms"),
         "llm_calls": llm_calls,
+        "agentic_llm_calls": meta.get("agentic_llm_calls"),
+        "agentic_iterations": meta.get("agentic_iterations"),
         "prompt_tokens": meta.get("prompt_tokens"),
         "completion_tokens": meta.get("completion_tokens"),
         "model_used": meta.get("model"),
@@ -603,7 +620,7 @@ def run_live_ab(
         "errors": sum(1 for record in all_records if record.get("error")),
     }
     counts["missing"] = counts["expected"] - counts["records"]
-    harness_errors = [
+    trial_errors = [
         record["error"]
         for record in all_records
         if record.get("error")
@@ -638,6 +655,7 @@ def run_live_ab(
             "repetitions": config.repetitions,
             "delay_s": config.delay_s,
             "no_fallback": config.no_fallback,
+            "quota_note": config.quota_note,
             "case_ids": [case["id"] for case in cases],
             "case_count": len(cases),
             "arms": [
@@ -656,12 +674,12 @@ def run_live_ab(
         "arms": arm_summaries,
         "comparisons": comparisons,
         "claims": claims,
-        "harness_errors": harness_errors,
+        "trial_errors": trial_errors,
         "status": (
             "ok"
             if counts["missing"] == 0
             and counts["errors"] == 0
-            and not harness_errors
+            and not trial_errors
             and counts["throttled"] == 0
             and all(summary["complete"] for summary in arm_summaries)
             else "attention"

@@ -72,6 +72,8 @@ def render_live_ab_markdown(
     lines.append(f"| Cases | `{config.get('case_count')}` |")
     lines.append(f"| Repetitions per arm | `{config.get('repetitions')}` |")
     lines.append(f"| Inter-case delay | `{config.get('delay_s')} s` |")
+    if config.get("quota_note"):
+        lines.append(f"| Provider quota | {_cell(config['quota_note'], 200)} |")
     lines.append(f"| Raw records | `{raw_path}` |")
     lines.append(f"| Manifest | `{manifest['artifacts']['manifest']['path']}` |")
     lines.append("")
@@ -89,10 +91,12 @@ def render_live_ab_markdown(
     lines.append("")
     lines.append(
         "| Claim | Arm | Scope | Passed / trials | Wilson 95% | "
-        "Validation valid | Residual unverified cases | Grounding retries | "
-        "Mean calls | Mean wall | Throttled |"
+        "Validation valid | Guard-reported unverified | Post-hoc unverified | "
+        "Grounding retries | Mean calls | Mean wall | Throttled |"
     )
-    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    lines.append(
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+    )
     claim_by_arm = {claim["arm_id"]: claim for claim in summary["claims"]}
     for arm in arms:
         claim = claim_by_arm.get(arm["arm_id"], {})
@@ -101,6 +105,7 @@ def render_live_ab_markdown(
             f"{_cell(claim.get('scope', ''), 80)} | {_observed(arm)} | "
             f"{_pct(arm.get('pass_rate'))} | {arm.get('validation_valid')}/{arm['trials']} | "
             f"{arm.get('unverified_cases')}/{arm['trials']} | "
+            f"{arm.get('posthoc_unverified_cases')}/{arm['trials']} | "
             f"{arm.get('grounding_retries')}/{arm['trials']} | "
             f"{arm.get('mean_llm_calls')} | {arm.get('mean_wall_s')} s | "
             f"{arm.get('throttled')} |"
@@ -109,9 +114,10 @@ def render_live_ab_markdown(
     lines.append(
         "Wilson intervals cover this sample only. `sampled` is deliberate: "
         "these are observations on one endpoint and one curated case set, not "
-        "a universal accuracy claim. Residual unverified cases use the "
-        "production `unverified_figures` metric when grounding is enabled; "
-        "the no-grounding arm's post-hoc view is approximate (see limitations)."
+        "a universal accuracy claim. Guard-reported unverified cases use the "
+        "production `unverified_figures` metric, which is only populated when "
+        "grounding is enabled. The post-hoc view is approximate and is never "
+        "used for pass/fail (see limitations)."
     )
     lines.append("")
 
@@ -168,7 +174,7 @@ def render_live_ab_markdown(
     lines.append(f"| Passed / failed | `{counts.get('passed')}` / `{counts.get('failed')}` |")
     lines.append(f"| Throttled trials | `{counts.get('throttled')}` |")
     lines.append(f"| Error trials | `{counts.get('errors')}` |")
-    lines.append(f"| Harness errors | `{len(summary.get('harness_errors', []))}` |")
+    lines.append(f"| Trial errors | `{len(summary.get('trial_errors', []))}` |")
     lines.append(f"| Status | `{summary.get('status')}` |")
     total_calls = sum(
         record.get("llm_calls") or 0 for record in records
@@ -183,9 +189,9 @@ def render_live_ab_markdown(
     lines.append(f"| Total prompt tokens | `{total_prompt}` |")
     lines.append(f"| Total completion tokens | `{total_completion}` |")
     lines.append("")
-    if summary.get("harness_errors"):
-        lines.append("Harness errors:")
-        for error in summary["harness_errors"][:10]:
+    if summary.get("trial_errors"):
+        lines.append("Trial errors:")
+        for error in summary["trial_errors"][:10]:
             lines.append(f"- `{_cell(error, 240)}`")
         lines.append("")
 
@@ -212,11 +218,13 @@ def render_live_ab_markdown(
     lines.append("## Limitations")
     lines.append("")
     lines.append(
-        "- This is a small, single-run sample on one pinned NVIDIA NIM endpoint "
-        "and 20 curated synthetic cases. Re-running the model can change the "
-        "answers. The Wilson intervals describe this sample, not future runs or "
-        "other models."
+        f"- This is a small, single-run sample on one pinned endpoint "
+        f"(`{config.get('model_id')}`) and {config.get('case_count')} curated "
+        "synthetic cases. Re-running the model can change the answers. The "
+        "Wilson intervals describe this sample, not future runs or other models."
     )
+    if config.get("quota_note"):
+        lines.append(f"- Provider quota at run time: {config['quota_note']}.")
     lines.append(
         "- Repetitions are sequential and may be throttled by provider quota. "
         "`--delay` spaces cases, not provider calls inside a case. A throttled "

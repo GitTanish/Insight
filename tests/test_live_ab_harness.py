@@ -16,6 +16,7 @@ from evaluation.bench.live_ab import (
     LiveConfig,
     compare_arms,
     run_live_ab,
+    run_signature,
     select_cases,
     summarize_arm,
 )
@@ -202,6 +203,15 @@ def test_select_cases_rejects_unknown_ids():
         select_cases([CASE], ["missing"], 0)
 
 
+def test_run_signature_covers_case_content_but_not_quota_note():
+    config = LiveConfig(model_id="test/model", delay_s=0)
+    base = run_signature(config, DEFAULT_ARMS, [CASE])
+    changed_case = {**CASE, "question": "Which region trails?"}
+    assert run_signature(config, DEFAULT_ARMS, [changed_case]) != base
+    with_note = LiveConfig(model_id="test/model", delay_s=0, quota_note="8k TPM")
+    assert run_signature(with_note, DEFAULT_ARMS, [CASE]) == base
+
+
 def test_summarize_and_compare_paired_cases():
     arm = Arm("baseline", "Baseline", agentic=False)
     records = [
@@ -267,6 +277,7 @@ def test_report_renders_arms_comparisons_and_limits(tmp_path):
             repetitions=1,
             delay_s=0,
             no_fallback=True,
+            quota_note="8k TPM, 200k TPD",
         ),
         arms=DEFAULT_ARMS,
         out_dir=tmp_path / "raw",
@@ -304,3 +315,5 @@ def test_report_renders_arms_comparisons_and_limits(tmp_path):
     assert "not a universal accuracy claim" in text
     assert "`agentic_no_verifier`" in text
     assert "`agentic_no_grounding`" in text
+    assert "8k TPM, 200k TPD" in text
+    assert "Post-hoc unverified" in text

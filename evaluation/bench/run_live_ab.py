@@ -100,6 +100,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow cross-provider fallback (default: pin exactly --model)",
     )
     parser.add_argument(
+        "--quota-note",
+        default="",
+        help="provider quota observed at run time (recorded in the manifest/report)",
+    )
+    parser.add_argument(
         "--out-dir",
         type=Path,
         default=None,
@@ -141,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         no_fallback=not args.allow_fallback,
         case_ids=case_ids,
         limit=args.limit,
+        quota_note=args.quota_note,
     )
 
     started_at = utc_now()
