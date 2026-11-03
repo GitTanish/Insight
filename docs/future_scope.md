@@ -59,9 +59,12 @@ budget 5/9) measured agentic **58/60 (96.7%, 95% CI 88.6–99.1)** vs single-sho
 2026-10-17 diagnosis showed most of that gap was a provider-side truncation bug
 that only hit the single-shot planner (13 of 17 baseline failures), fixed the
 same day; post-fix k=1 confirmations score 20/20 vs 19/20, i.e. **accuracy
-parity on this endpoint - the agentic value is the auditable tool trail**. The
-first live runs found and fixed an OpenAI wire-format bug that no offline fake
-could reach; env-var provider pinning proved unreliable on Windows, so a
+parity on this endpoint - the agentic value is the auditable tool trail**.
+**Caveat (2026-11-03):** the historical agentic arm scored the loop output
+directly and did not run the validator/grounding tail; those numbers are
+loop-only, not an end-to-end A/B. The shipped agentic path does run that tail.
+The first live runs found and fixed an OpenAI wire-format bug that no offline
+fake could reach; env-var provider pinning proved unreliable on Windows, so a
 `--no-fallback` flag makes live runs provable. Offline assurance: 11/11 sampled
 mutations killed, `loop.py` 96% branch coverage (see TEST.md "Verification
 evidence"). Next: repeat the pinned A/B on a second endpoint (Groq) - more
