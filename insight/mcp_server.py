@@ -233,7 +233,9 @@ def create_server(toolkit: Optional[AnalysisToolkit] = None) -> FastMCP:
         passed as numbers or as tables shaped {"columns": [...], "rows": [[..]]}
         for figures computed elsewhere. Returns ungrounded_numbers plus any
         independent-recomputation issues (verified=false means a mismatch was
-        found in the engine's own output).
+        found in the engine's own output), and a versioned certificate with
+        claim spans, evidence ids, recomputed aggregates, statistical warnings
+        and advisory causal-language flags.
         """
         try:
             return engine.verify_claims(

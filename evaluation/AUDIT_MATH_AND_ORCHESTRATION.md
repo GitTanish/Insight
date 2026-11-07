@@ -2,6 +2,13 @@
 
 Date: 2026-08-22 · suite: 178 offline tests + 20 golden-question cases + 16 real-world questions
 
+> **Status update (2026-11-07).** The analysis below is the 2026-08-22 audit. Current verifier behavior:
+>
+> - Independent recomputation now also covers `statistical_test` (test name, statistic, p-value, effect size, per-group `mean_*`, and the derived `difference`), bringing the covered set to eight operation families. SQL and chained `input_step` steps remain `not_covered`.
+> - `verify_claims` keeps its legacy summary and returns a versioned certificate with `grounding` vs `recomputed` attestation, claim spans/evidence ids, and per-aggregate status. The same contract is exposed through `python -m insight.verify_cli` and a local `POST /v1/verify`; see `../docs/CERTIFICATE.md`.
+> - Grounding now handles scientific notation, precision-aware rounding and magnitude matching, and `p < ...` thresholds; unverifiable checks are `not_checked`, never silent passes.
+> - Still open: SQL/chained recomputation, semantic claim-role verification, and MAR/MNAR diagnostics. The "known weaknesses" section below remains accurate.
+
 ---
 
 ## 1. How good is the mathematics, really?
@@ -37,7 +44,7 @@ reported `unverified_figures: []`** on both, i.e. every number in the narrative
 
 | Layer | What it proves | Coverage |
 |---|---|---|
-| Independent recomputation (`validation/verification.py`) | every headline aggregate re-derived through a second arithmetic path | group_aggregate, top_n, value_counts, correlation |
+| Independent recomputation (`validation/verification.py`) | every headline aggregate re-derived through a second arithmetic path | group_aggregate, top_n, value_counts, correlation, compare_subsets, statistical_test, anova_test, regression |
 | Golden cases (`evaluation/`) | exact expected values from independently computed ground truth (±0.5% default) | 20 cases / 5 datasets |
 | Statistical routing (`test_statistics.py`) | t-test, Mann-Whitney, chi², ANOVA+η², OLS coefficients, CIs, isotonic PAV | 26 tests |
 | Real-world cross-check (`REAL_WORLD_LOG.md`) | diamonds + 4-sheet clinical workbook vs pandas/scipy truth | 16 questions |
@@ -66,9 +73,9 @@ plan (LLM, JSON)  ──✗──► plan_validation_failed → explicit "what w
    ↓ ok
 execute (deterministic ops / sandboxed DuckDB)  ──✗──► step error
    ↓                                            ↓
-validate (sanity, small-N, MCAR, chart refs)     └──► repair once
+validate (sanity, small-N, MCAR, chart refs)     └──► repair (bounded)
    ↓ ok                                             (re-plan with error text)
-independent recomputation ──✗──► repair once
+independent recomputation ──✗──► repair (bounded)
    ↓ ok
 render charts (editorial, adaptive bins, fallbacks)
    ↓

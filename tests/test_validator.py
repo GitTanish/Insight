@@ -91,6 +91,21 @@ def test_chart_missing_axis_column_is_error(sales_df):
     assert any("references column 'no_such_column'" in e.message for e in validation.errors)
 
 
+def test_chart_missing_source_table_is_error(sales_df):
+    from insight.domain.analysis import ChartSpec, ChartType
+
+    plan = AnalysisPlan(
+        objective="t",
+        steps=[PlanStep(step_id=0, operation="value_counts", params={"column": "region"})],
+        charts=[ChartSpec(chart_type=ChartType.bar, title="x", source_step=4,
+                          x="region", y="count")],
+    )
+    execution = _run(plan, sales_df)
+    validation = validate_execution(plan, execution)
+    assert not validation.valid
+    assert any("references step 4" in e.message for e in validation.errors)
+
+
 def test_small_sample_warning(sales_df):
     tiny = sales_df.head(6).copy()
     plan = AnalysisPlan(

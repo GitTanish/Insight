@@ -80,6 +80,45 @@ def test_repair_after_execution_failure(stub_chain_factory, sales_df, profile, t
     assert len(llm.requests) == 3
 
 
+def test_repair_loop_honors_max_repair_attempts(
+    stub_chain_factory, sales_df, profile, tmp_path, monkeypatch
+):
+    from insight.settings import get_settings
+
+    broken_plan = """
+    {
+      "objective": "t",
+      "steps": [
+        {"step_id": 0, "operation": "group_aggregate",
+         "params": {"group_by": "region",
+                    "metrics": [{"column": "revenue", "agg": "sum"}],
+                    "sort_by": "not_a_real_column"}}
+      ]
+    }
+    """.strip()
+    monkeypatch.setenv("INSIGHT_MAX_REPAIR_ATTEMPTS", "2")
+    get_settings.cache_clear()
+    try:
+        llm = stub_chain_factory(
+            [broken_plan, broken_plan, VALID_PLAN, EXPLANATION]
+        )
+        response = run_analysis_sync(
+            sales_df,
+            profile,
+            AnalysisRequest(question="revenue by region"),
+            artifacts_dir=tmp_path,
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert response.error is None
+    assert response.meta["repair_attempted"] is True
+    assert response.meta["repair_attempts"] == 2
+    assert response.validation.valid
+    assert response.answer.startswith("**West leads**")
+    assert len(llm.requests) == 4
+
+
 def test_explainer_receives_rendered_figure_list(stub_chain_factory, sales_df, profile, tmp_path):
     llm = stub_chain_factory([VALID_PLAN, EXPLANATION])
 
@@ -97,3 +136,73 @@ def test_explainer_receives_rendered_figure_list(stub_chain_factory, sales_df, p
 
     system_content = explainer_call.messages[0].content
     assert "ONLY figures listed" in system_content
+
+
+def test_explainer_failure_records_fallback_reason(
+    stub_chain_factory, sales_df, profile, tmp_path
+):
+    from insight.domain.errors import InsightError
+
+    llm = stub_chain_factory([VALID_PLAN, EXPLANATION])
+    original_generate = llm.generate
+    calls = 0
+
+    async def generate_then_fail(request):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise InsightError("rate limited by provider")
+        return await original_generate(request)
+
+    llm.generate = generate_then_fail
+
+    response = run_analysis_sync(
+        sales_df,
+        profile,
+        AnalysisRequest(question="Which region has the highest revenue?"),
+        artifacts_dir=tmp_path,
+    )
+
+    assert response.answer.startswith("**Analysis complete.**")
+    assert response.meta["answer_fallback"] is True
+    assert "rate limited by provider" in response.meta["explainer_error"]
+
+
+def test_non_agentic_explainer_honors_call_delay(
+    stub_chain_factory, sales_df, profile, tmp_path, monkeypatch
+):
+    import insight.orchestrator as orch
+    from insight.settings import get_settings
+
+    monkeypatch.setenv("INSIGHT_AGENTIC_DELAY_S", "0.05")
+    get_settings.cache_clear()
+
+    events: list[tuple[str, float | None]] = []
+    real_sleep = orch.asyncio.sleep
+
+    async def fake_sleep(delay):
+        events.append(("sleep", delay))
+        await real_sleep(0)
+
+    monkeypatch.setattr(orch.asyncio, "sleep", fake_sleep)
+    llm = stub_chain_factory([VALID_PLAN, EXPLANATION])
+    original_generate = llm.generate
+
+    async def generate(request):
+        events.append(("generate", None))
+        return await original_generate(request)
+
+    llm.generate = generate
+
+    try:
+        response = run_analysis_sync(
+            sales_df,
+            profile,
+            AnalysisRequest(question="Which region has the highest revenue?"),
+            artifacts_dir=tmp_path,
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert response.error is None
+    assert events == [("generate", None), ("sleep", 0.05), ("generate", None)]

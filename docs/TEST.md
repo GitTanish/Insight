@@ -86,12 +86,12 @@ Insight operates on an absolute architectural boundary: **The LLM plans and narr
 |---|---|---|---|
 | **Domain Contracts** | `insight/domain/dataset.py`<br>`insight/domain/analysis.py`<br>`insight/domain/query.py`<br>`insight/domain/visualization.py`<br>`insight/domain/errors.py` | Pydantic v2 schemas: `DatasetProfile`, `AnalysisPlan`, `PlanStep`, `ExecutionResult`, `DataTable`, `Calculation`, `ChartSpec`, `Evidence` | Schema validation error, typed `InsightError` hierarchy |
 | **Profiling & Briefing** | `insight/profiling/profiler.py`<br>`insight/briefing.py` | Role inference (numeric, categorical, datetime, identifier), fingerprinting (schema/content SHA-256), heuristic anomaly briefing | Graceful skip of non-viable metrics, warning emission |
-| **Planning Engine** | `insight/planning/planner.py`<br>`insight/planning/prompts.py` | Generates structured JSON plans with bounded self-repair (`max_repair_attempts = 1`). Injects SQL schema for multi-table queries. Separate `AGENTIC_SYSTEM` prompt for tool-calling mode | `PlanValidationError` (surfaced cleanly to user) |
+| **Planning Engine** | `insight/planning/planner.py`<br>`insight/planning/prompts.py` | Generates structured JSON plans with bounded self-repair (`INSIGHT_MAX_REPAIR_ATTEMPTS`, default `1`). Injects SQL schema for multi-table queries. Separate `AGENTIC_SYSTEM` prompt for tool-calling mode | `PlanValidationError` (surfaced cleanly to user) |
 | **Agentic Tool-Use Layer** | `insight/tools/tooling.py`<br>`insight/tools/runtime.py`<br>`insight/tools/loop.py`<br>`insight/tools/pipeline.py` | Op registry → provider tool schemas (`$defs` inlined; OpenAI + Anthropic shapes); `dispatch()` validates then runs the same `OperationSpec.run`; `run_loop()` is the bounded observe/plan/act/refine loop; `pipeline.py` rebuilds `AnalysisPlan`+`ExecutionResult` so the SAME validator/charts/explainer/grounding tail runs. Opt-in via `INSIGHT_AGENTIC` / `AnalysisRequest.agentic` | Bounded by `LoopBudget`; aborts on repeated identical failure; returns readable errors to the model for retry; never executes free-form code |
 | **Op Registry** | `insight/analytics/operations.py` | 15 deterministic operations: `summarize`, `value_counts`, `top_n`, `group_aggregate`, `distribution`, `detect_outliers`, `trend`, `correlation`, `statistical_test`, `anova_test`, `regression`, `isotonic_calibration`, `sql_query`, `filter_rows`, `compare_subsets` | `OperationError` caught by executor, marked as failed step |
 | **DuckDB SQL Sandbox** | `insight/analytics/sql_engine.py` | Embedded in-memory DuckDB with `enable_external_access=false`, `lock_configuration=true`, single SELECT/WITH guard, keyword blocklist, and 10s interrupt watchdog | `ValueError` with security or timeout explanation |
 | **Statistical Engine** | `insight/analytics/statistics.py` | SciPy test routing (Welch t-test, Mann-Whitney U, Chi-Square + Cramér's V, ANOVA + $\eta^2$, OLS regression, Isotonic PAV) | Rejection of small samples, fallback to non-parametric tests |
-| **Validation Engine** | `insight/validation/result_validator.py`<br>`insight/validation/verification.py`<br>`insight/validation/grounding.py` | Three-layer gate: (1) Sanity & NaN scan, (2) Independent pandas recomputation (second code path), (3) Answer number-level grounding verification | Triggers plan repair or explainer rewrite; flags unverified numbers |
+| **Validation Engine** | `insight/validation/result_validator.py`<br>`insight/validation/verification.py`<br>`insight/validation/grounding.py`<br>`insight/verification/certificate.py` | Three-layer gate: (1) Sanity & NaN scan, (2) Independent pandas recomputation (second code path), (3) Answer number-level grounding verification. `verify_claims` packages the result as a versioned certificate with claim spans, evidence ids, per-aggregate status, and `grounding`/`recomputed` attestation | Triggers plan repair or explainer rewrite; flags unverified numbers; skipped checks are `not_checked` |
 | **LLM Provider Hub** | `insight/llm/registry.py`<br>`insight/llm/providers/*`<br>`insight/llm/base.py` | Multi-provider fallback chain (Groq, Mistral, OpenAI, Anthropic, Ollama, OpenRouter, Custom). Live model discovery and BYOK (`X-Insight-Key`) | `AllProvidersFailedError`, automatic fallback down provider list |
 | **Conversation State** | `insight/conversation/state.py` | Cross-turn active filter persistence, tracked dimensions and metrics, session context serialization | State isolation per session cookie / session ID |
 | **Query Cache** | `insight/cache.py` | SHA-256 fingerprint + question + model + state cache with TTL days (default 14) and max disk budget (default 512MB LRU) | Bypassed when `INSIGHT_QUERY_CACHE=off` or plan validation fails |
@@ -109,8 +109,8 @@ Insight operates on an absolute architectural boundary: **The LLM plans and narr
 |:--:|---|---|---|---|
 | **INV-01** | **No Arbitrary Code Execution** | System Architecture | Prompt planner: *"Write python code to compute total"* | Plan must strictly contain registered operations (`operations.py`) or sandboxed SQL. |
 | **INV-02** | **Deterministic Numerical Authority** | `insight/execution/executor.py`<br>`insight/analytics/operations.py` | Compare numbers in `ExecutionResult.calculations` against reference pandas/scipy math | Tolerance $\le 10^{-6}$ against standalone NumPy / SciPy computation. |
-| **INV-03** | **Bounded Plan Repair** | `insight/planning/planner.py:52` | Force invalid plan (e.g. non-existent column) | Exactly `1 + max_repair_attempts` attempts made; halts on failure without looping. |
-| **INV-04** | **Independent Recomputation Gate** | `insight/validation/verification.py`<br>`insight/validation/result_validator.py` | Tamper with operation output table rows | `validate_execution().valid == False`; mismatch issue emitted if values deviate $> 10^{-6}$. |
+| **INV-03** | **Bounded Plan Repair** | `insight/planning/planner.py:52`<br>`insight/orchestrator.py` | Force invalid plan (e.g. non-existent column), or invalid executed result | Planner-internal repair and post-execution result repair both honor `INSIGHT_MAX_REPAIR_ATTEMPTS` (default `1`); neither loops past that budget. |
+| **INV-04** | **Independent Recomputation Gate** | `insight/validation/verification.py`<br>`insight/validation/result_validator.py` | Tamper with operation output tables or calculations | `validate_execution().valid == False`; mismatch issue emitted if values deviate $> 10^{-6}$. Covers group aggregates, top-N, value counts, correlation, statistical tests, regression, ANOVA, and subset comparisons; SQL and chained `input_step` steps are `not_covered`. |
 | **INV-05** | **Strict Number Grounding** | `insight/validation/grounding.py` | Explainer hallucinates a statistic (e.g., *"West had 99,999 units"* when not in table) | `find_ungrounded_numbers` catches the token; triggers retry; marks ungrounded in metadata. |
 | **INV-06** | **DuckDB SQL Confinement** | `insight/analytics/sql_engine.py:62-105` | Inject `ATTACH`, `COPY`, `DROP`, `INSTALL`, `; SELECT ...`, or file reads | Rejected by `validate_statement` keyword blocklist, single-statement split, or engine sandboxing. |
 | **INV-07** | **SQL Interrupt Watchdog** | `insight/analytics/sql_engine.py:112-127` | Execute long-running SQL query: `SELECT count(*) FROM range(10000000000)` | Interrupted at `timeout_s` (default 10s); raises `ValueError("query exceeded limit")`. |
@@ -196,12 +196,15 @@ To verify whether Insight is *actually correct* rather than merely returning pla
 * **Outlier Share**: $\frac{\text{flagged rows}}{\text{total valid rows}}$.
 
 ### 6. Grounding Guard (`insight.validation.grounding`)
-* **Extraction Pattern**: Regex `-?\d[\d,]*(?:\.\d+)?`.
+* **Extraction Pattern**: `-?(?:\d[\d,]*(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?`; scientific notation such as `4.794e-16` is one token, not `4.794` plus `-16`.
 * **Allowed Figures Without Exact Evidence Match**:
-  * Year numbers: $1900 \le x \le 2100$.
-  * Small calendar/rank integers: $1 \le |x| \le 31$.
-  * Percentage variants: If $v \in \text{floats}$, $v \times 100 \pm 0.11$ is valid (e.g., $0.2853$ permits $28.53\%$).
-* **Failure Condition**: Any figure outside these rules triggers a grounding violation and rewrite request.
+  * Four-digit year-like integers: $1900 \le x \le 2100$.
+  * Ordinal and date contexts (e.g. "top 3", "Q4", date components) - **not** every integer $1 \le |x| \le 31$.
+  * Percentage variants: if $v \in \text{floats}$, $v \times 100 \pm 0.11$ is valid (e.g. $0.2853$ permits $28.53\%$).
+  * Precision-aware rounding: the claim must equal `round(evidence, claimed_decimals)`; `8.55` grounds `8.554537`, `8.56` does not. Magnitude-only matches (e.g. `683` against `-683.411797`) are recorded as `rounded_magnitude_match`.
+* **Inequality thresholds**: `p < 0.001`-style claims are evaluated against evidence labelled/columned `p_value`. A contradicted threshold fails; ambiguous or absent p-value evidence becomes `not_checked`, never a silent pass.
+* **Tiny values**: exact comparison requires relative closeness at small magnitudes, so `1e-9` cannot ground a rounded-away `p_value = 0.0`.
+* **Failure Condition**: Any figure outside these rules triggers a grounding violation and rewrite request. `ground_numeric_claims` retains spans/evidence ids for the certificate; `find_ungrounded_numbers` preserves the legacy list-of-tokens behaviour.
 
 ---
 
@@ -209,15 +212,17 @@ To verify whether Insight is *actually correct* rather than merely returning pla
 
 ### Offline Unit & Integration Test Suite (`tests/`)
 
-The repository contains **43 tracked test files** (`git ls-files tests/`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 - **never** an absolute test count (see Documentation Discrepancies).
+The repository contains **49 tracked test modules** (`git ls-files "tests/test_*.py"`) that execute completely offline without network access or live API keys (using `ScriptedLLM`/`StubChain` from `conftest.py`; the tool-calling fakes `ScriptedToolLLM`/`ToolStubChain` live in `tests/test_agentic_pipeline.py` itself). Assert `pytest -q` exits 0 - **never** an absolute test count (see Documentation Discrepancies).
 
 | Test File | What It Actually Exercises | Weaknesses / False-Confidence Risks |
 |---|---|---|
 | `test_operations.py` | 15 deterministic operations under normal data; filtered frames stay mutation-safe (originals untouched, no `SettingWithCopyWarning`); the auto-catalog renders `filters ({column, op, value}[])` - flat, never `[][]` | Does not test extreme null cascades (covered in `test_invariants.py`). |
+| `test_differential_operations.py` | Seven operation families executed on seeded frames and compared with independent pandas/NumPy/SciPy references: grouped aggregates, stable top-N, value counts, pairwise correlations, subset CIs, ANOVA, and OLS | Three synthetic seeds only; references share pandas/NumPy/SciPy primitives, so they are independent of the verifier but not of the libraries. |
+| `test_metamorphic_operations.py` | Exact metamorphic relations for row permutation, duplicate rows, positive scaling, and additive shifts across the same seven operations, including the ddof=1 standard-deviation and ANOVA degrees-of-freedom effects | Encodes mathematical relations rather than real-data edge cases; does not cover null cascades or categorical ordering. |
 | `test_statistics.py` | SciPy routing, t-test, ANOVA, OLS, isotonic PAV | Relies on synthetic distributions; extreme collinearity not fully stressed. |
 | `test_sql_engine.py` | DuckDB session setup, table sanitization, keyword guards, watchdog interrupt, describe | Tests keyword blocklist, but does not test exotic DuckDB extensions. |
 | `test_validator.py` | Sanity checks, empty table detection, MCAR caveats | Does not test multi-step DAG validation where intermediate steps fail. |
-| `test_verification.py` | Independent recomputation for group_agg, top_n, value_counts, correlation | Only tests steps with `input_step=None`; skips explicit DAG inputs. |
+| `test_verification.py` | Independent recomputation for group_agg, top_n, value_counts, correlation, statistical_test, regression, anova_test, and compare_subsets; table and calculation tamper cases | Only tests steps with `input_step=None`; skips explicit DAG inputs. |
 | `test_executor.py` | Sequential executor: `filter_rows` mutation flows into the next step, unknown op recorded, invalid params reported, partial failure still yields surviving tables | Deliberately sequential; no concurrency or cancellation tests. |
 | `test_chaining.py` | End-to-end `input_step` DAG: filter→group→top_n, chained statistical test on a filtered frame, unknown/forward/self `input_step` rejection, explicit `input_step` beating the implicit working frame | Scripted plans only; the planner's *choice* of a chain is not tested. |
 | `test_orchestrator.py` | Full pipeline with scripted LLM responses | Uses `ScriptedLLM`; does not test real LLM reasoning variance. |
@@ -226,7 +231,7 @@ The repository contains **43 tracked test files** (`git ls-files tests/`) that e
 | `test_conversation.py` | Session state extraction from plans, serialization | Tests state representation, not long multi-turn semantic drift. |
 | `test_briefing.py` | Heuristic detectors (trend, imbalance, correlation, outliers) | Thresholds are hardcoded; edge cases with $N < 10$ need caution. |
 | `test_artifacts.py` | dbt model generation and Slack alert monitor JSON | Validates string templates, not dbt compilation in a real dbt project. |
-| `test_alert_runner.py` | Monitor loading, threshold evaluation, state-change alerting, webhook payload shape, destructive-query rejection | Webhook is faked (no live Slack call); no persistence of fired-state across restarts. |
+| `test_alert_runner.py` | Monitor loading, cron parsing and per-monitor scheduling, threshold evaluation, state-change alerting, persisted fired state across restarts, webhook payload shape, destructive-query rejection | Webhook is faked (no live Slack call); one state file must be owned by a single worker (no cross-instance lock). |
 | `test_sql_webapp.py` | FastAPI endpoints for `/export/dbt` and `/export/alert` | In-memory session fixture; single-threaded test client. |
 | `test_webapp.py` | FastAPI routes (`/`, `/upload`, `/query`, `/healthz`, clear) | Tests SSE via TestClient; buffering behavior differs from real browsers. |
 | `test_webapp_agentic.py` | `/query` + `/api/query` with `agentic`, SSE `tool_call`/`tool_result` frames, agent chip rendering, explicit `agentic=0` override | Stub chain, not a live provider; no browser round trip. |
@@ -240,10 +245,13 @@ The repository contains **43 tracked test files** (`git ls-files tests/`) that e
 | `test_agentic_pipeline.py` | Loop→rebuild→shared-tail integration: multi-call turns, `input_step` chaining, repeated-failure abort, SSE event sink, plan/execution rebuild, chart synthesis, meta telemetry, orchestrator E2E, grounding flags invented numbers, throttle/provider-failure error paths, cache separation, `plan_only` precedence, `artifacts_dir=None` | Entirely scripted responses - offline by construction; live behavior is exercised separately by `evaluation/run_eval_agentic.py` (see the Golden-Question Evaluation Harness section for what has actually been measured). |
 | `test_toolkit.py` | Agent toolkit core: CSV/Excel loading (incl. delimiter sniffing), profiles, op execution, DAG plans (chained derived columns), SQL joins + sandbox blocks, `verify_claims` grounded/ungrounded paths, caller-supplied evidence, tampered-execution detection, file-root allowlist + size cap (symlink escape) | No LLM involved by design; grounding coverage mirrors `test_invariants.py`. |
 | `test_mcp_server.py` | MCP surface via in-memory client: all 8 tools registered, load→run→verify flow, structured error payloads, run_id verification, caller evidence, transport guard; auth-token policy for HTTP transports, Bearer rejection, file-root env policy | In-memory session; no stdio/HTTP transport smoke test. |
+| `test_certificate.py` | Versioned certificate contract: claim spans + evidence ids, ungrounded tokens, scientific notation, precision-aware rounding, p-value inequalities, recomputation tamper detection, covered vs. not-covered aggregates (SQL is explicitly not recomputed), statistical-test recomputation, statistical warning wiring, causal-language flags, grounding-only attestation, JSON serialisation, committed JSON Schema sync, CLI evidence/execute modes | Rule-based causal/statistical checks are advisory; semantic role binding and signing are not implemented. |
+| `test_verify_service.py` | Local HTTP surface: evidence-only mode, execute + recompute mode, failed verification still returns a certificate, request validation, opt-in bearer auth | Local/dev surface; no persistence, queues, tenancy or load testing. |
 | `test_agentic_replay.py` | Record/replay: a trimmed transcript of the first pinned live NIM run (`tests/fixtures/agentic_replay_sales_top_region.json`) is replayed through the real loop - dispatch and op execution are live code, only the LLM is recorded; skips when `evaluation/data/` is absent | One recorded happy path; replay proves determinism, not live variance. |
 | `test_text_streaming.py` | Token-by-token SSE deltas, `first_token_ms`, live typing-bubble rendering, reduced-motion caret | Chunking and browser rendering are stubbed/asserted on markup, not observed live. |
 | `test_prompt_cache.py` | Planner system-prompt byte stability (the prefix-cache prefix), `cache_prompt` flag set, `cached_prompt_tokens` accounting | Uses a stubbed usage block; real provider cache hits not asserted. |
-| `test_hitl_plan_approval.py` | `plan_review` stop (never executes), editable plan payload, approved plan executes without re-planning, approved plan re-validated against the schema, user edits honored, `INSIGHT_PLAN_APPROVAL` forces the gate, plan review never cached, `analyze()` rejects `plan_only`, client controls exist | `analyze()` raising for `plan_only` is by design (it cannot express a plan-only outcome). |
+| `test_hitl_plan_approval.py` | `plan_review` stop (never executes), editable plan payload, approved plan executes without re-planning, approved plan re-validated against the schema, approval bound to dataset/generation/expiry with stale and wrong-dataset rejection, user edits honored, `INSIGHT_PLAN_APPROVAL` forces the gate, plan review never cached, `analyze()` rejects `plan_only`, client controls exist | `analyze()` raising for `plan_only` is by design (it cannot express a plan-only outcome). |
+| `test_audit_ledger.py` | Hash-chained JSONL ledger: dataset/approval/validation/timing capture, plan-review binding, disabled/no-op and write-failure paths, tamper detection, torn-tail detection with fail-closed appends, manual truncation recovery, the complete-tail-deletion boundary, `/api/query` analysis + plan-only records | Single-process test client plus a small two-process append probe in `test_durability_harness.py`; larger concurrency runs are manual evidence. |
 | `test_upload_polish.py` | Background briefing polish: deterministic findings without an LLM round-trip, in-place session update, stale-generation guard, pending state in the template | Polishing itself is stubbed. |
 | `test_byok.py` | `X-Insight-Key` header propagation, env fallback, `require_user_key` blocking/allowing | No live key validation. |
 | `test_chain_fallback.py` | `_Chain` failover: 429 throttling fails over before the first token, empty-content response falls through to the next provider, all-providers-down raises `AllProvidersFailedError` with every cause. (Note: the empty-content guard now exempts tool-call-only responses, which is why this still passes in agent mode) | Simulated failures only; no real 429/5xx timing behaviour. |
@@ -254,6 +262,10 @@ The repository contains **43 tracked test files** (`git ls-files tests/`) that e
 | `test_providers.py` | Provider URL construction, headers, retry backoff, tool-call payload/parse shapes | Mocks HTTP client; does not hit real provider endpoints. |
 | `test_registry.py` | Model catalog, sorting, text-model filtering, custom provider env mapping, NVIDIA NIM provider registration (key env, curated model, endpoint URL), Groq second-account alias (`GROQ_API_KEY2` → `groq2/...` ids), keyless-provider chain exclusion (BYOK keys bypass the gate), `no_fallback` chain pinning | Relies on static catalog definitions. |
 | `test_evaluation.py` | Scoring logic (`_numeric_close`, `_ops_satisfied`) | Tests harness itself, not agent performance. Needs `evaluation/data/`, which is gitignored - CI regenerates it. |
+| `test_bench_harness.py` | Adversarial benchmark schema: deterministic fixtures, clean controls, mutation application, JSONL writing | Fast harness checks only; detection curves come from `evaluation/bench/run_all.py`. |
+| `test_durability_harness.py` | Durability evidence schema: all D-01..D-08 claims exercised with a reduced workload, known-boundary records retained, process settings restored, and the generated report keeps the limitations visible | Reduced concurrency (2 writers x 3 records); the full run is `evaluation/bench/run_durability.py`. |
+| `test_load_soak_harness.py` | Load/soak evidence schema: concurrent executor determinism, real local uvicorn uploads, a short sustained soak with RSS sampling, cache churn bounds, settings restoration, and report limitations | Tiny workload (2 uploads, 1-second soak, 2 fixtures); the full run is `evaluation/bench/run_load_soak.py`. |
+| `test_live_ab_harness.py` | Live A/B and ablation evidence schema: four-arm production-path orchestration, verifier/grounding ablation scoping, setting restoration, resume, quota-split combination, report limitations | Uses a fake runner; never calls a provider. The full evidence runs are `evaluation/bench/run_live_ab.py` and `evaluation/bench/combine_live_ab.py`. |
 
 ---
 
@@ -283,6 +295,7 @@ The repository contains **43 tracked test files** (`git ls-files tests/`) that e
   * **Token totals are not comparable across arms** (agentic sums every provider call; single-shot records the meta usage block) - compare `llm_calls` and wall time, not token counts.
   * Historical context: the first live runs (Groq `openai/gpt-oss-120b`, unpinned) exposed the wire-format bug (every 2nd turn 400'd); after the fix they scored 17/20 at the 3/6 smoke budget (all failures iteration caps) with ~178 s/case free-tier TPM backoff. Superseded by the pinned numbers above.
   * Post-fix confirmations (2026-10-17). After the harmony-token sanitizer: one pinned k=1 agentic run passed **20/20** (42 calls, 0 throttled). After the truncation fix (`reasoning_effort` now sent to NIM - see #3): one pinned k=1 baseline run scored **19/20** (mean wall 13.1 s, mean 2.45 `llm_calls`; the single failure is a model op-choice miss, `group_aggregate` where the grader wanted a test op). Separate data points, not folded into the k=3 aggregate (different code revisions); together they show the pre-fix arms' rates were confounded by the two provider bugs.
+  * **Historical caveat (added 2026-11-03).** The agentic arm in the 2026-10-16/17 runs used `evaluation/run_eval_agentic.py`, which scores `LoopOutcome.final_answer` directly and does **not** run `validate_execution`, independent recomputation, chart synthesis, the explainer, or the grounding guard. The baseline used `run_eval.py`, which does run the full pipeline. Those runs are therefore **loop-output vs end-to-end**, not a clean production-path A/B; the "all 58 passing trials had `validation_valid`" claim is **withdrawn**. Use the Phase 5 harness (`evaluation/bench/run_live_ab.py`) for end-to-end A/B and guardrail-ablation claims, and treat the historical +25 pp gap as a loop-only observation confounded by the provider-truncation bug.
 
 ### Verification evidence (2026-10-16 deep pass)
 
@@ -293,7 +306,7 @@ Claim → check matrix for the agentic layer. **A claim without a check below is
 | Loop budgets are hard (INV-11) | AGENT-01/02; mutation "budget off-by-one" killed | 0 overruns across the pinned runs | **PROVEN** |
 | Repeated identical failure aborts (INV-11) | AGENT-03; 2 mutations killed (early-fire + never-fire) | - (no live failure loops) | **PROVEN** |
 | Tool calls never execute code; unknown op/column rejected (INV-12) | AGENT-04 + adversarial suite | - | **PROVEN** |
-| Agentic answers pass the same validator + grounding gates (INV-13) | AGENT-06; grader rule 4 requires `validation_valid` | all 58 passing trials had `validation_valid` | **PROVEN** |
+| Agentic answers pass the same validator + grounding gates (INV-13) | AGENT-06; grader rule 4 requires `validation_valid`; the 2026-11-03 live harness drives `run_analysis_sync` for every arm | **The historical 2026-10-16/17 loop-only A/B did not run the validator/grounding tail**, so its 58 passing trials do not prove this. The production-path pilot records `validation_valid` per arm (see Phase 5) | **PROVEN in code/offline; historical live claim withdrawn** |
 | HITL precedence over agentic (INV-14) | AGENT-08 + orchestrator guard tests; mutation killed at **both** guard sites | - | **PROVEN** |
 | Chaining via `input_step` and implicit `filter_rows` narrowing | AGENT-05 + narrowing regression (added after mutation sampling found it untested) | replay fixture executes the real chain | **PROVEN** |
 | OpenAI wire format, both directions | `MockTransport` strict-validator test; inbound parsing-variants test | first live multi-turn runs | **PROVEN** |
@@ -302,7 +315,18 @@ Claim → check matrix for the agentic layer. **A claim without a check below is
 | Works across other providers | Anthropic/OpenAI payload-shape tests | Groq smokes + historical 17/20 only | **PARTIAL / UNVERIFIED broadly** |
 | Live SSE tool trail | `test_webapp_agentic.py` (SSE frames asserted) | 2026-10-17 live smoke (`tools/sse_smoke.py`): tool_call → tool_result in order, 32 streamed delta chunks, result cites "West", no error frame | **PROVEN live** |
 
-**Mutation sampling** (`tools/mutate.py`; mutmut is WSL-only, this is the curated substitute): 11 single-site mutations targeting `loop.py` invariants, the wire parser (incl. the harmony-token sanitizer), reasoning-effort stripping, the truncation hint and the HITL guard - **11/11 killed** by the offline suite. The first sampling round survived 1/7: nothing tested that `filter_rows` narrows the implicit working frame; the gap was closed with `test_filter_rows_narrows_working_frame_for_later_calls`. Sampled, not exhaustive - do not present this as a mutation score.
+**Mutation sampling** (`tools/mutate.py`; mutmut is WSL-only, this is the curated substitute): 23 single-site mutations targeting `loop.py` invariants, the wire parser (incl. the harmony-token sanitizer), reasoning-effort stripping, the truncation hint, the HITL guard, verifier recomputation and schema checks, final-validator gates, grounding, and executor failure propagation - **23/23 killed** by the offline suite. Two rounds found real test gaps. The first survived 1/7: nothing tested that `filter_rows` narrows the implicit working frame; the gap was closed with `test_filter_rows_narrows_working_frame_for_later_calls`. The trust-core round survived 1/5: the verifier's top-N output-schema check was only exercised by a value tamper, not by a dropped projected column; the gap was closed with `test_top_n_dropped_projected_column_is_detected`. Sampled, not exhaustive - do not present this as a mutation score.
+
+### Load, concurrency, and soak benchmark (`evaluation/bench/`, 2026-11-01)
+
+`evaluation/bench/run_load_soak.py --quick|--full` covers four load surfaces: concurrent executions of the deterministic analysis fixture matrix compared against serial result signatures; concurrent HTTP uploads against a real local single-worker uvicorn process; a bounded-duration upload soak with periodic process-tree RSS sampling; and concurrent result-cache writes/reads under a small size budget. It writes JSONL trials, a summary, and a manifest with SHA-256 hashes, then regenerates `LOAD_SOAK.md`. The HTTP path is upload -> parse -> profile -> deterministic briefing; it does not call an LLM. Rate limiting and model discovery are disabled in the child server. The harness restores the process settings it mutates and removes its work directory; the app does not import this tooling. CI runs the reduced harness test (`test_load_soak_harness.py`), not the full evidence run.
+
+```powershell
+.venv\Scripts\python.exe evaluation\bench\run_load_soak.py --quick
+.venv\Scripts\python.exe evaluation\bench\run_load_soak.py --full
+```
+
+Load numbers are wall-clock observations from synthetic fixtures on the host under test, not an SLO or capacity claim. RSS is a process working-set sample, not a leak proof; the soak is deliberately bounded in duration. Raw records stay under `.artifacts/bench/load-soak/<run_id>/` (gitignored); `LOAD_SOAK.md` is the generated human-readable view.
 
 **Branch coverage** (`coverage run --branch` over the agentic + provider test selection): `insight/tools/loop.py` **96%** branch; `insight/tools/` between 75% and 100% (scoped total 81%). Remaining `openai_compat.py` misses are the SSE stream parser, `list_models` discovery and retry-sleep branches - pre-existing non-agentic paths; the wire-format functions are fully covered.
 
@@ -481,10 +505,18 @@ python evaluation/run_eval.py --model nvidia/openai/gpt-oss-20b --no-fallback
 # Aggregate repeated runs into stats (per-case passes/k, 95% Wilson CI, cost)
 python evaluation/ab_stats.py --agentic DIR1,DIR2 --baseline DIR3,DIR4
 
-# Mutation sampling + branch coverage of the agentic tool layer (offline, no keys)
+# Mutation sampling + branch coverage of the agentic tool layer and trust core (offline, no keys)
 python tools/mutate.py
 python -m coverage run --branch --source=insight.tools,insight.llm.providers.openai_compat -m pytest tests/test_agentic_tools.py tests/test_agentic_pipeline.py tests/test_agentic_adversarial.py tests/test_agentic_replay.py tests/test_webapp_agentic.py tests/test_chain_fallback.py tests/test_providers.py -q
 python -m coverage report -m
+
+# Durability / fault-injection evidence (writes DURABILITY.md)
+python evaluation/bench/run_durability.py --quick
+python evaluation/bench/run_durability.py --full
+
+# Load / concurrency / soak evidence (writes LOAD_SOAK.md; local server only)
+python evaluation/bench/run_load_soak.py --quick
+python evaluation/bench/run_load_soak.py --full
 
 # Live SSE smoke (start the app first: uvicorn webapp.app:app --port 8899)
 python tools/sse_smoke.py
@@ -507,7 +539,7 @@ python tools/smoke_toolkit.py
 3. **PowerShell UTF-8 BOM**: PowerShell 5.1 `Set-Content` can inject a Byte Order Mark (BOM). All parsers must handle UTF-8-SIG or strip BOMs.
 4. **Agentic mode's live coverage has one measured endpoint**: the full k≥3 pinned A/B completed on NVIDIA NIM `gpt-oss-20b` (pre-fix 58/60 vs 43/60 single-shot - see Verification evidence; the gap collapsed to parity after the 2026-10-17 truncation fix, see "What failed" #3/#6), and the tool loop, plan rebuild, shared tail, SSE trail, budgets and failure paths are covered offline; but no other endpoint has a full A/B (Groq is smokes plus a historical 17/20 at the 3/6 budget). Re-run the pinned harness before claiming a rate on another model.
 5. **Agentic cost is measured; quota behavior is not**: pinned runs averaged 2.17 `llm_calls` (2.36 single-shot) and 11.3 s wall vs 51.3 s. On the Groq free tier, wall time was dominated by TPM backoff (~178 s/case, invisible to `throttled` because internal retries eventually succeed); NIM throttles in bursts instead. `INSIGHT_AGENTIC_MAX_LLM_CALLS` (default 9) remains a safety bound, not a tuned budget.
-6. **Alert-runner state is per-process**: fired-monitor state lives in memory, so a restart re-posts an already-triggering monitor, and multi-instance deployments have no shared state. It is a reference worker, not a durable scheduler; cron/interval supervision is the caller's job.
+6. **Alert-runner state is single-owner**: fired-monitor state and last-run times persist in `--state`, so a restart does not re-post an already-triggering monitor and recovery is still detected. There is no cross-instance lock, so exactly one worker should own a state file; multi-instance deployments need external coordination. It remains a reference worker, not a general scheduler service.
 7. **Deferred Features (Do Not Implement Unprompted)**: Python code-interpreter sandboxes (omitted by design; DuckDB covers analytics safely), multi-user authentication, and native PDF exports.
 
 ### Documentation Discrepancies

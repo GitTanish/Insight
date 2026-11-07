@@ -1,5 +1,6 @@
 """Human-in-the-loop plan approval: planning must stop before execution, and an
 approved (possibly user-edited) plan must execute without re-planning."""
+import json
 import os
 import sys
 import tempfile
@@ -39,23 +40,29 @@ def frame():
     return df, profile_dataframe(df, "t.csv", content_hash="z" * 16)
 
 
-async def _events(frame, request):
+async def _events(frame, request, dataset_generation=None):
     df, profile = frame
     return [
         event
         async for event in orch.analyze_stream(
-            df, profile, request, artifacts_dir=None
+            df,
+            profile,
+            request,
+            artifacts_dir=None,
+            dataset_generation=dataset_generation,
         )
     ]
 
 
-def _run(frame, request):
-    import asyncio
-
+def _run(frame, request, dataset_generation=None):
     df, profile = frame
     with tempfile.TemporaryDirectory() as tmp:
         return run_analysis_sync(
-            df, profile, request, artifacts_dir=tmp
+            df,
+            profile,
+            request,
+            artifacts_dir=tmp,
+            dataset_generation=dataset_generation,
         )
 
 
@@ -94,6 +101,162 @@ def test_plan_review_carries_editable_plan_and_question(frame):
     # Must round-trip as JSON so the browser can edit and resubmit it.
     import json
     assert json.loads(json.dumps(review["plan"])) == review["plan"]
+
+
+def test_plan_review_carries_dataset_bound_approval(frame):
+    import asyncio
+
+    llm = ScriptedLLM([PLAN])
+    orch._build_chain_for = lambda *a, **k: StubChain(llm)
+
+    events = asyncio.run(_events(
+        frame,
+        AnalysisRequest(question="avg revenue by region", plan_only=True),
+        dataset_generation=7,
+    ))
+    review = next(e for e in events if e["type"] == "plan_review")
+    approval = review["approval"]
+
+    assert approval["dataset_id"] == frame[1].fingerprint.dataset_id
+    assert approval["generation"] == 7
+    assert len(approval["plan_hash"]) == 16
+    assert approval["expires_at"] > approval["issued_at"]
+
+
+def test_approval_binding_allows_matching_plan_to_execute(frame):
+    import asyncio
+
+    llm = ScriptedLLM([PLAN])
+    orch._build_chain_for = lambda *a, **k: StubChain(llm)
+    events = asyncio.run(_events(
+        frame,
+        AnalysisRequest(question="avg revenue by region", plan_only=True),
+        dataset_generation=7,
+    ))
+    review = next(e for e in events if e["type"] == "plan_review")
+
+    llm = ScriptedLLM(["Answer from the approved plan."])
+    orch._build_chain_for = lambda *a, **k: StubChain(llm)
+    response = _run(
+        frame,
+        AnalysisRequest(
+            question="avg revenue by region",
+            approved_plan=review["plan"],
+            approval=review["approval"],
+        ),
+        dataset_generation=7,
+    )
+
+    assert response.error is None
+    assert response.meta["approval"]["bound"] is True
+    assert response.meta["approval"]["edited"] is False
+
+
+def test_approval_rejects_a_different_dataset(frame):
+    import asyncio
+
+    llm = ScriptedLLM([PLAN])
+    orch._build_chain_for = lambda *a, **k: StubChain(llm)
+    events = asyncio.run(_events(
+        frame, AnalysisRequest(question="q", plan_only=True)
+    ))
+    review = next(e for e in events if e["type"] == "plan_review")
+    approval = dict(review["approval"])
+    approval["dataset_id"] = "not-the-current-dataset"
+
+    response = _run(
+        frame,
+        AnalysisRequest(
+            question="q",
+            approved_plan=review["plan"],
+            approval=approval,
+        ),
+    )
+
+    assert response.error == "plan_validation_failed"
+    assert "different dataset" in response.answer
+
+
+def test_approval_rejects_a_stale_dataset_generation(frame):
+    import asyncio
+
+    llm = ScriptedLLM([PLAN])
+    orch._build_chain_for = lambda *a, **k: StubChain(llm)
+    events = asyncio.run(_events(
+        frame,
+        AnalysisRequest(question="q", plan_only=True),
+        dataset_generation=1,
+    ))
+    review = next(e for e in events if e["type"] == "plan_review")
+
+    response = _run(
+        frame,
+        AnalysisRequest(
+            question="q",
+            approved_plan=review["plan"],
+            approval=review["approval"],
+        ),
+        dataset_generation=2,
+    )
+
+    assert response.error == "plan_validation_failed"
+    assert "dataset changed" in response.answer
+
+
+def test_approval_rejects_an_expired_plan(frame):
+    import asyncio
+
+    llm = ScriptedLLM([PLAN])
+    orch._build_chain_for = lambda *a, **k: StubChain(llm)
+    events = asyncio.run(_events(
+        frame, AnalysisRequest(question="q", plan_only=True)
+    ))
+    review = next(e for e in events if e["type"] == "plan_review")
+    approval = dict(review["approval"])
+    approval["expires_at"] = 0
+
+    response = _run(
+        frame,
+        AnalysisRequest(
+            question="q",
+            approved_plan=review["plan"],
+            approval=approval,
+        ),
+    )
+
+    assert response.error == "plan_validation_failed"
+    assert "expired" in response.answer
+
+
+def test_user_edit_after_review_is_recorded_as_edited(frame):
+    import asyncio
+
+    llm = ScriptedLLM([PLAN])
+    orch._build_chain_for = lambda *a, **k: StubChain(llm)
+    events = asyncio.run(_events(
+        frame, AnalysisRequest(question="q", plan_only=True)
+    ))
+    review = next(e for e in events if e["type"] == "plan_review")
+    edited = dict(review["plan"])
+    edited["objective"] = "hand-edited by the analyst"
+
+    llm = ScriptedLLM(["Answer."])
+    orch._build_chain_for = lambda *a, **k: StubChain(llm)
+    response = _run(
+        frame,
+        AnalysisRequest(
+            question="q",
+            approved_plan=edited,
+            approval=review["approval"],
+        ),
+    )
+
+    assert response.error is None
+    assert response.meta["approval"]["edited"] is True
+    assert (
+        response.meta["approval"]["submitted_plan_hash"]
+        != response.meta["approval"]["approved_plan_hash"]
+    )
 
 
 def test_approved_plan_executes_without_calling_the_planner(frame):
@@ -171,10 +334,6 @@ def test_user_edit_is_honored_not_overwritten(frame):
 def test_plan_approval_setting_forces_the_gate(frame, monkeypatch):
     monkeypatch.setenv("INSIGHT_PLAN_APPROVAL", "on")
     get_settings.cache_clear()
-    import importlib
-    import insight.settings as settings_mod
-    importlib.reload(settings_mod)
-    get_settings.cache_clear()
     try:
         llm = ScriptedLLM([PLAN])
         orch._build_chain_for = lambda *a, **k: StubChain(llm)
@@ -188,15 +347,10 @@ def test_plan_approval_setting_forces_the_gate(frame, monkeypatch):
     finally:
         monkeypatch.delenv("INSIGHT_PLAN_APPROVAL", raising=False)
         get_settings.cache_clear()
-        importlib.reload(settings_mod)
-        get_settings.cache_clear()
 
 
 def test_plan_review_is_not_cached(frame, monkeypatch):
     get_settings.cache_clear()
-    import importlib
-    import insight.settings as settings_mod
-    importlib.reload(settings_mod)
     try:
         llm = ScriptedLLM([PLAN])
         orch._build_chain_for = lambda *a, **k: StubChain(llm)
@@ -207,8 +361,6 @@ def test_plan_review_is_not_cached(frame, monkeypatch):
         ))
         assert any(e["type"] == "plan_review" for e in events)
     finally:
-        get_settings.cache_clear()
-        importlib.reload(settings_mod)
         get_settings.cache_clear()
 
 
@@ -223,6 +375,75 @@ def test_analyze_rejects_plan_only_because_it_has_no_plan_event():
             df, profile, AnalysisRequest(question="q", plan_only=True)
         ))
     assert "streaming" in str(excinfo.value)
+
+
+def test_webapp_query_requires_approval_binding(monkeypatch):
+    llm = ScriptedLLM([PLAN])
+    orch._build_chain_for = lambda *a, **k: StubChain(llm)
+    sid = "hitl-binding-session"
+    STORE.drop(sid)
+    csv = b"region,revenue\n" + b"".join(
+        f"r{i % 4},{100 + i}\n".encode() for i in range(60)
+    )
+    with TestClient(app) as client:
+        uploaded = client.post(
+            "/upload",
+            files={"files": ("t.csv", csv, "text/csv")},
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+        response = client.post(
+            "/query",
+            data={
+                "question": "avg revenue by region",
+                "approved_plan": json.dumps({
+                    "objective": "x",
+                    "steps": [{
+                        "step_id": 0,
+                        "operation": "group_aggregate",
+                        "params": {
+                            "group_by": "region",
+                            "metrics": [{
+                                "column": "revenue",
+                                "agg": "mean",
+                                "alias": "m",
+                            }],
+                        },
+                    }],
+                    "charts": [],
+                }),
+            },
+        )
+        assert response.status_code == 400
+        assert "approval metadata" in response.json()["error"]
+    STORE.drop(sid)
+
+
+def test_api_plan_only_returns_approval_binding(monkeypatch):
+    llm = ScriptedLLM([PLAN])
+    orch._build_chain_for = lambda *a, **k: StubChain(llm)
+    sid = "hitl-api-approval-session"
+    STORE.drop(sid)
+    csv = b"region,revenue\n" + b"".join(
+        f"r{i % 4},{100 + i}\n".encode() for i in range(60)
+    )
+    with TestClient(app) as client:
+        uploaded = client.post(
+            "/upload",
+            files={"files": ("t.csv", csv, "text/csv")},
+            follow_redirects=False,
+        )
+        assert uploaded.status_code == 303
+        response = client.post(
+            "/api/query",
+            json={"question": "avg revenue by region", "plan_only": True},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["plan"]["objective"]
+        assert payload["approval"]["dataset_id"]
+        assert payload["approval"]["plan_hash"]
+    STORE.drop(sid)
 
 
 def test_client_has_plan_approval_controls():

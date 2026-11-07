@@ -98,16 +98,20 @@ def _entry_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
-def _remove(path: Path) -> None:
+def _remove(path: Path) -> bool:
+    """Delete one cache entry; return True only if it is gone afterwards."""
     import shutil
 
     if path.is_dir():
         shutil.rmtree(path, ignore_errors=True)
-    else:
-        try:
-            path.unlink()
-        except OSError:
-            pass
+        return not path.exists()
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
 
 
 def sweep_cache() -> int:
@@ -130,8 +134,7 @@ def sweep_cache() -> int:
     removed = 0
     kept: list[tuple[float, int, Path]] = []
     for mtime, size, path in entries:
-        if now - mtime > max_age_s:
-            _remove(path)
+        if now - mtime > max_age_s and _remove(path):
             removed += 1
         else:
             kept.append((mtime, size, path))
@@ -141,9 +144,9 @@ def sweep_cache() -> int:
     for mtime, size, path in kept:
         if total <= max_bytes:
             break
-        _remove(path)
-        total -= size
-        removed += 1
+        if _remove(path):
+            total -= size
+            removed += 1
     return removed
 
 

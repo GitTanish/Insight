@@ -69,6 +69,50 @@ python evaluation/generate_datasets.py   # once, if evaluation/data/ is missing
 python tools/smoke_toolkit.py            # 54 checks: 15 ops, SQL sandbox, DAG, verification, MCP
 ```
 
+## Standalone verifier (CLI and HTTP)
+
+The same grounding/recomputation certificate is available without an MCP client.
+
+```bash
+# Evidence-only: every number in the answer must appear in evidence.json
+python -m insight.verify_cli --answer "Revenue was 77." --evidence evidence.json
+
+# Execute one deterministic operation, then verify the narrative
+python -m insight.verify_cli --answer "North leads with 150." \
+  --data sales.csv --operation group_aggregate --params-file params.json
+
+# Verify prose against a sandboxed SQL result
+python -m insight.verify_cli --answer-file draft.md --data sales.csv \
+  --sql "SELECT region, SUM(revenue) AS total FROM sales GROUP BY region"
+
+# Gate CI on warnings as well as hard failures
+python -m insight.verify_cli --answer-file draft.md --evidence evidence.json \
+  --fail-on-warn --out cert.json
+```
+
+`--params-file` exists because PowerShell can mangle inline JSON. The CLI prints
+the certificate to stdout (or `--out`), exits 1 on `fail`, and returns 2 for
+input or operation errors. A runnable "lying agent" demo:
+
+```bash
+python tools/demo_epistemic_firewall.py
+```
+
+Local HTTP:
+
+```bash
+uvicorn insight.verify_service:app --host 127.0.0.1 --port 8787
+curl -s http://127.0.0.1:8787/v1/verify \
+  -H 'content-type: application/json' -d @request.json
+```
+
+`POST /v1/verify` accepts either `evidence` or `data` plus exactly one of
+`operation` / `sql`. It returns HTTP 200 with the certificate even when the
+verdict is `fail`; malformed requests are 422. Set
+`INSIGHT_VERIFY_AUTH_TOKEN` for bearer auth and `INSIGHT_VERIFY_MAX_CSV_MB` to
+cap inline CSV. This is a local/dev surface: no persistence, queues, or tenancy.
+The full contract is in [CERTIFICATE.md](CERTIFICATE.md).
+
 ## Alert runner
 
 A SQL answer in the webapp offers **Alert monitor**, which downloads a JSON descriptor. Run it with the companion worker:

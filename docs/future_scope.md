@@ -1,6 +1,6 @@
 # Insight v3 Future Scope
 
-Status as of 2026-10-13. Shipped since v2.0: evaluation harness, statistics depth
+Status as of 2026-11-07. Shipped since v2.0: evaluation harness, statistics depth
 (ANOVA/regression/CIs/isotonic calibration), conversation state machine, packaging
 (Docker/CI/query cache), DOCX consolidation, embedded DuckDB relational analytics
 (multi-file joins/windows via sandboxed `sql_query`) and dbt/alert artifact exports.
@@ -8,8 +8,10 @@ Recently: token-by-token answer streaming, prefix-cached planner prompts,
 cache on the SSE path, background briefing polish, and human-in-the-loop plan
 approval (`INSIGHT_PLAN_APPROVAL=on`). Latest: **agentic tool-use mode**
 (`INSIGHT_AGENTIC` - ops as tools, bounded observe/plan/act/refine loop over the
-same verified pipeline) and the **alert-runner companion worker**
-(`tools/alert_runner.py`).
+same verified pipeline), the **alert-runner companion worker**
+(`tools/alert_runner.py`), and the **versioned verification certificate** with a
+standalone CLI (`insight.verify_cli`) and local HTTP surface
+(`insight.verify_service`).
 A Python code-interpreter sandbox was explicitly skipped by the owner - DuckDB
 covers the analytical surface safely.
 
@@ -24,6 +26,11 @@ covers the analytical surface safely.
    PostgreSQL connectors still open below.
 5. **Human-in-the-loop** - shipped: every plan is reviewable and editable before
    execution; approved plans are re-validated against the schema.
+6. **Standalone verification** - shipped: `verify_claims` returns a versioned
+   certificate (grounding vs recomputed attestation, claim spans, evidence ids,
+   per-aggregate status) through the toolkit/MCP server, CLI and local HTTP
+   endpoint. Covered operations are recomputed; SQL and chained steps are
+   explicitly `not_covered`.
 
 ## Next up
 
@@ -59,9 +66,12 @@ budget 5/9) measured agentic **58/60 (96.7%, 95% CI 88.6–99.1)** vs single-sho
 2026-10-17 diagnosis showed most of that gap was a provider-side truncation bug
 that only hit the single-shot planner (13 of 17 baseline failures), fixed the
 same day; post-fix k=1 confirmations score 20/20 vs 19/20, i.e. **accuracy
-parity on this endpoint - the agentic value is the auditable tool trail**. The
-first live runs found and fixed an OpenAI wire-format bug that no offline fake
-could reach; env-var provider pinning proved unreliable on Windows, so a
+parity on this endpoint - the agentic value is the auditable tool trail**.
+**Caveat (2026-11-03):** the historical agentic arm scored the loop output
+directly and did not run the validator/grounding tail; those numbers are
+loop-only, not an end-to-end A/B. The shipped agentic path does run that tail.
+The first live runs found and fixed an OpenAI wire-format bug that no offline
+fake could reach; env-var provider pinning proved unreliable on Windows, so a
 `--no-fallback` flag makes live runs provable. Offline assurance: 11/11 sampled
 mutations killed, `loop.py` 96% branch coverage (see TEST.md "Verification
 evidence"). Next: repeat the pinned A/B on a second endpoint (Groq) - more
@@ -72,6 +82,15 @@ further (the `OperationRouter` seam is in place). The
 leak into tool names (fixed - inbound names are sanitized; post-fix pinned run
 20/20); the residual pattern is the model short-circuiting past the required
 test op on that one case.
+
+### 7. Semantic claim verification and signed certificates
+The current certificate proves that a number appears in evidence and that covered
+aggregates survive a second arithmetic path. It does not prove the number is
+attached to the correct predicate, that caller-supplied evidence is true, or
+that causal language is justified. `signature` is present but always `null`.
+Next: evidence-replay control, a signing key managed by the verifier, and
+claim-level checks for a narrow set of numeric predicates. SQL and chained
+(`input_step`) steps also remain outside independent recomputation.
 
 ### Explicitly deferred (per owner decision)
 Python code-interpreter sandboxing (DuckDB chosen instead), auth/multi-user,

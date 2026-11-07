@@ -33,6 +33,11 @@ from insight.observability import (
 from insight.planning.planner import Planner
 from insight.planning.prompts import build_explainer_messages
 from insight.settings import get_settings
+from insight.validation.approval import (
+    build_plan_approval,
+    plan_digest,
+    validate_plan_approval,
+)
 from insight.validation.result_validator import validate_execution
 from insight.visualization.renderer import render_charts
 from insight.visualization.themes import EDITORIAL_THEME
@@ -395,6 +400,8 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
     t_explain = time.monotonic()
     answer_chunks: list[str] = []
     first_token_ms: Optional[int] = None
+    answer_fallback = False
+    explainer_error: Optional[str] = None
     with trace_phase("explainer.compose"):
         try:
             async for delta in chain.stream(explainer_request):
@@ -406,8 +413,12 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
                 yield {"type": "delta", "text": delta}
             answer = "".join(answer_chunks).strip()
             if not answer:
+                answer_fallback = True
+                explainer_error = "empty explainer response"
                 answer = _fallback_answer(validation, execution)
-        except InsightError:
+        except InsightError as exc:
+            answer_fallback = True
+            explainer_error = str(getattr(exc, "message", exc))[:300]
             answer = _fallback_answer(validation, execution)
     explaining_ms = int((time.monotonic() - t_explain) * 1000)
 
@@ -505,6 +516,7 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
     meta: dict = {
         "model": chain.last_used,
         "objective": plan.objective,
+        "plan_hash": plan_digest(plan.model_dump(mode="json")),
         "repair_attempted": ctx.repair_attempted,
         "planning_ms": ctx.planning_ms,
         "repair_ms": ctx.repair_ms,
@@ -517,6 +529,8 @@ async def _tail_events(ctx: _TailCtx) -> AsyncIterator[dict]:
         "grounding_retry_ms": grounding_retry_ms,
         "first_token_ms": first_token_ms,
         "explaining_ms": explaining_ms,
+        "answer_fallback": answer_fallback,
+        "explainer_error": explainer_error,
         "execution_ms": execution.duration_ms,
         "total_ms": int((time.monotonic() - ctx.started) * 1000),
         "tokens_in": chain.tokens_in,
@@ -653,6 +667,7 @@ async def analyze_stream(
     state: Optional[AnalysisSessionState] = None,
     datasets: Optional[dict] = None,
     use_cache: bool = True,
+    dataset_generation: Optional[int] = None,
 ) -> AsyncIterator[dict]:
     configure_langsmith()
     settings = get_settings()
@@ -902,6 +917,13 @@ async def analyze_stream(
             "warning_count": len(validation.warnings),
         }
 
+        # The explainer is another provider call. When call spacing is
+        # configured (e.g. to stay inside a provider's tokens-per-minute
+        # budget), let the last loop call age out of the rate window before
+        # asking for the narrative.
+        if settings.agentic_call_delay_s > 0:
+            await asyncio.sleep(settings.agentic_call_delay_s)
+
         async for event in _tail_events(_TailCtx(
             df=df,
             profile=profile,
@@ -938,6 +960,7 @@ async def analyze_stream(
     repair_ms = 0
     repair_attempts = 0
     repair_issues: list[str] = []
+    approval_meta: dict = {}
 
     yield {"type": "stage", "key": "planning", "label": "Planning investigation..."}
 
@@ -946,6 +969,20 @@ async def analyze_stream(
         if request.approved_plan is not None:
             # The user reviewed (and possibly edited) this plan. Re-validate it
             # against the current schema instead of trusting it blindly.
+            if request.approval is not None:
+                approval_issues, approval_meta = validate_plan_approval(
+                    request.approval,
+                    profile,
+                    generation=dataset_generation,
+                    submitted_plan=request.approved_plan,
+                )
+                if approval_issues:
+                    raise PlanValidationError(approval_issues)
+            else:
+                # Library callers may still submit a plan directly. The webapp
+                # and JSON API require the binding; record its absence so the
+                # response does not imply a human approval was verified.
+                approval_meta = {"bound": False, "reason": "no approval metadata"}
             with trace_phase("planning.plan.approved", question=request.question):
                 plan, approved_issues = validate_plan_columns(
                     AnalysisPlan.model_validate(request.approved_plan), profile
@@ -998,12 +1035,17 @@ async def analyze_stream(
 
     if request.plan_only or settings.plan_approval:
         # Human-in-the-loop: hand the plan to the user for review/edit and stop
-        # before any data is executed.
+        # before any data is executed. The approval binding makes the returned
+        # plan valid only for this dataset generation and for a short time.
         plan_payload = plan.model_dump(mode="json")
+        approval = build_plan_approval(
+            plan_payload, profile, generation=dataset_generation
+        )
         yield {
             "type": "plan_review",
             "plan": plan_payload,
             "question": request.question,
+            "approval": approval.model_dump(mode="json"),
         }
         finish_root_run(
             root_client, root_run,
@@ -1030,43 +1072,56 @@ async def analyze_stream(
         "warning_count": len(validation.warnings),
     }
 
-    if not validation.valid and settings.max_repair_attempts > 0:
+    max_repairs = max(0, settings.max_repair_attempts)
+    if not validation.valid and max_repairs > 0:
         repair_attempted = True
-        repair_issues: list[str] = list(validation.error_messages())[:8]
-        yield {
-            "type": "stage",
-            "key": "repairing",
-            "label": "Validator rejected results â€” repairing plan once...",
-            "level": "warn",
-        }
-        repair_summary = "; ".join(validation.error_messages()[:8])
-        repair_question = (
-            f"{request.question}\n\n(A previous attempt failed: {repair_summary}. "
-            "Produce a corrected plan avoiding these problems.)"
-        )
-        try:
+        repair_issues = list(validation.error_messages())[:8]
+        for attempt in range(1, max_repairs + 1):
+            yield {
+                "type": "stage",
+                "key": "repairing",
+                "label": (
+                    "Validator rejected results — repairing plan "
+                    f"(attempt {attempt}/{max_repairs})..."
+                ),
+                "level": "warn",
+            }
+            repair_summary = "; ".join(validation.error_messages()[:8])
+            repair_question = (
+                f"{request.question}\n\n(A previous attempt failed: {repair_summary}. "
+                "Produce a corrected plan avoiding these problems.)"
+            )
             t_repair = time.monotonic()
-            repaired_plan = await planner.plan(
-                repair_question,
-                profile,
-                history=history,
-                session_context=session_context,
-                sql_schema=sql_schema_text,
-            )
-            repair_attempts = 1
-            second_execution = await _execute_with_sql(repaired_plan)
-            second_validation = validate_execution(
-                repaired_plan, second_execution, df=df, profile=profile
-            )
-            plan, execution, validation = (
-                repaired_plan,
-                second_execution,
-                second_validation,
-            )
-        except PlanValidationError:
-            repair_attempts = 1
-        finally:
-            repair_ms += int((time.monotonic() - t_repair) * 1000)
+            try:
+                repaired_plan = await planner.plan(
+                    repair_question,
+                    profile,
+                    history=history,
+                    session_context=session_context,
+                    sql_schema=sql_schema_text,
+                )
+                second_execution = await _execute_with_sql(repaired_plan)
+                second_validation = validate_execution(
+                    repaired_plan, second_execution, df=df, profile=profile
+                )
+            except PlanValidationError:
+                repair_attempts = attempt
+            else:
+                repair_attempts = attempt
+                plan, execution, validation = (
+                    repaired_plan,
+                    second_execution,
+                    second_validation,
+                )
+                if validation.valid:
+                    break
+            finally:
+                repair_ms += int((time.monotonic() - t_repair) * 1000)
+
+    # The explainer is another provider call. In non-agentic mode there is no
+    # loop budget to space calls, so honor the same delay before the tail.
+    if settings.agentic_call_delay_s > 0:
+        await asyncio.sleep(settings.agentic_call_delay_s)
 
     async for event in _tail_events(_TailCtx(
         df=df,
@@ -1090,6 +1145,7 @@ async def analyze_stream(
         repair_ms=repair_ms,
         repair_attempts=repair_attempts,
         repair_issues=repair_issues,
+        extra_meta={"approval": approval_meta} if approval_meta else {},
     )):
         yield event
     return
@@ -1104,6 +1160,7 @@ async def analyze(
     state: Optional[AnalysisSessionState] = None,
     use_cache: bool = True,
     datasets: Optional[dict] = None,
+    dataset_generation: Optional[int] = None,
 ) -> AnalysisResponse:
     import datetime as _dt
     from pathlib import Path as _Path
@@ -1141,7 +1198,15 @@ async def analyze(
     pipeline_error: Exception | None = None
     try:
         async for event in analyze_stream(
-            df, profile, request, artifacts_dir, history, state, datasets, use_cache
+            df,
+            profile,
+            request,
+            artifacts_dir,
+            history,
+            state,
+            datasets,
+            use_cache,
+            dataset_generation,
         ):
             if event["type"] == "result":
                 response = event["response"]
@@ -1183,11 +1248,22 @@ def run_analysis_sync(
     state: Optional[AnalysisSessionState] = None,
     use_cache: bool = True,
     datasets: Optional[dict] = None,
+    dataset_generation: Optional[int] = None,
 ) -> AnalysisResponse:
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(
-            analyze(df, profile, request, artifacts_dir, history, state, use_cache, datasets)
+            analyze(
+                df,
+                profile,
+                request,
+                artifacts_dir,
+                history,
+                state,
+                use_cache,
+                datasets,
+                dataset_generation,
+            )
         )
     finally:
         try:

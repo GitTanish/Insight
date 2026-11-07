@@ -21,7 +21,9 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 
+from insight import audit
 from insight.briefing import findings_to_dicts, generate_briefing
 from insight.domain.query import AnalysisRequest
 from insight.llm import registry as llm_registry
@@ -338,6 +340,25 @@ def _build_query_context(
     )
 
 
+def _audit_kwargs(
+    request: Request,
+    sid: str,
+    context: _QueryContext,
+    session: WebSession,
+    question: str,
+) -> dict:
+    """Identity fields shared by every ledger event for this request."""
+    return {
+        "question": question,
+        "profile": context.profile,
+        "route": request.url.path,
+        "request_id": getattr(request.state, "request_id", None),
+        "session_id": sid,
+        "dataset_generation": context.generation,
+        "uploaded_name": session.uploaded_name,
+    }
+
+
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
@@ -588,6 +609,7 @@ async def query(
     model_id: str = Form(default=""),
     temperature: float = Form(default=-1),
     approved_plan: str = Form(default=""),
+    approval: str = Form(default=""),
     agentic: str = Form(default=""),
 ):
     sid = request.cookies.get("insight_sid") or svc.new_session_id()
@@ -610,14 +632,38 @@ async def query(
         except json.JSONDecodeError:
             return JSONResponse({"error": "approved_plan is not valid JSON"}, status_code=400)
 
-    analysis_request = AnalysisRequest(
-        question=question,
-        model_id=model_id or session.model_id or None,
-        temperature=(temperature if temperature is not None and temperature >= 0 else None),
-        api_key=user_key,
-        approved_plan=plan_payload,
-        agentic=_resolve_agentic_flag(agentic),
-    )
+    approval_payload: dict | None = None
+    if approval.strip():
+        try:
+            approval_payload = json.loads(approval)
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "approval is not valid JSON"}, status_code=400)
+    if plan_payload is not None and approval_payload is None:
+        return JSONResponse(
+            {
+                "error": (
+                    "approval metadata is required with an approved plan; "
+                    "review the plan again"
+                )
+            },
+            status_code=400,
+        )
+
+    try:
+        analysis_request = AnalysisRequest(
+            question=question,
+            model_id=model_id or session.model_id or None,
+            temperature=(temperature if temperature is not None and temperature >= 0 else None),
+            api_key=user_key,
+            approved_plan=plan_payload,
+            approval=approval_payload,
+            agentic=_resolve_agentic_flag(agentic),
+        )
+    except ValidationError as exc:
+        return JSONResponse(
+            {"error": f"invalid approval metadata: {exc.errors()[0]['msg']}"},
+            status_code=400,
+        )
 
     if not session.begin_query():
         return JSONResponse(
@@ -651,6 +697,7 @@ async def query(
                 history=context.history,
                 state=context.state,
                 datasets=context.datasets,
+                dataset_generation=context.generation,
             ):
                 etype = event["type"]
                 if etype == "result":
@@ -666,15 +713,31 @@ async def query(
                         analysis_state=final_response.meta.get("analysis_state"),
                         max_turns=get_settings().session_max_turns,
                     )
+                    audit.record_analysis(
+                        final_response,
+                        submitted_approval=analysis_request.approval,
+                        **_audit_kwargs(request, sid, context, session, question),
+                    )
                     yield sse_frame("result", {"html": html})
                 elif etype == "plan_review":
                     # Stops here by design: the user reviews/edits before execution.
+                    audit.record_plan_review(
+                        event.get("plan") or {},
+                        event.get("approval") or {},
+                        **_audit_kwargs(request, sid, context, session, question),
+                    )
                     yield sse_frame("plan_review", event)
                 elif etype == "stage":
                     yield sse_frame("stage", event)
                 else:
                     yield sse_frame(etype, event)
             yield sse_frame("end", {})
+        except Exception as exc:
+            audit.record_failure(
+                exc,
+                **_audit_kwargs(request, sid, context, session, question),
+            )
+            raise
         finally:
             session.end_query()
 
@@ -711,21 +774,39 @@ async def api_query(request: Request):
 
     plan_only = bool(body.get("plan_only")) or get_settings().plan_approval
     approved_plan = body.get("approved_plan")
+    approval = body.get("approval")
     if plan_only and approved_plan is not None:
         return JSONResponse(
             {"error": "plan_only and approved_plan are mutually exclusive"},
             status_code=400,
         )
+    if approved_plan is not None and approval is None:
+        return JSONResponse(
+            {
+                "error": (
+                    "approval metadata is required with an approved plan; "
+                    "call plan_only first and submit the returned approval"
+                )
+            },
+            status_code=400,
+        )
 
-    analysis_request = AnalysisRequest(
-        question=question,
-        model_id=body.get("model_id"),
-        temperature=body.get("temperature"),
-        api_key=user_key,
-        plan_only=plan_only,
-        approved_plan=approved_plan,
-        agentic=_resolve_agentic_flag(body.get("agentic")),
-    )
+    try:
+        analysis_request = AnalysisRequest(
+            question=question,
+            model_id=body.get("model_id"),
+            temperature=body.get("temperature"),
+            api_key=user_key,
+            plan_only=plan_only,
+            approved_plan=approved_plan,
+            approval=approval,
+            agentic=_resolve_agentic_flag(body.get("agentic")),
+        )
+    except ValidationError as exc:
+        return JSONResponse(
+            {"error": f"invalid approval metadata: {exc.errors()[0]['msg']}"},
+            status_code=400,
+        )
 
     if not session.begin_query():
         return JSONResponse(
@@ -742,36 +823,61 @@ async def api_query(request: Request):
                 {"error": context_error or "dataset unreadable"}, status_code=400
             )
 
-        if plan_only:
-            # Human-in-the-loop: return the reviewable plan and stop before execution.
+        try:
+            if plan_only:
+                # Human-in-the-loop: return the reviewable plan and stop before execution.
+                async for event in analyze_stream(
+                    context.df,
+                    context.profile,
+                    analysis_request,
+                    artifacts_dir=context.artifacts_dir,
+                    datasets=context.datasets or None,
+                    dataset_generation=context.generation,
+                ):
+                    if event.get("type") == "plan_review":
+                        audit.record_plan_review(
+                            event.get("plan") or {},
+                            event.get("approval") or {},
+                            **_audit_kwargs(request, sid, context, session, question),
+                        )
+                        return JSONResponse(
+                            {
+                                "plan": event["plan"],
+                                "approval": event.get("approval"),
+                            }
+                        )
+                return JSONResponse(
+                    {"error": "planner did not return a reviewable plan"},
+                    status_code=502,
+                )
+
+            response = None
             async for event in analyze_stream(
                 context.df,
                 context.profile,
                 analysis_request,
                 artifacts_dir=context.artifacts_dir,
                 datasets=context.datasets or None,
+                dataset_generation=context.generation,
             ):
-                if event.get("type") == "plan_review":
-                    return JSONResponse({"plan": event["plan"]})
-            return JSONResponse(
-                {"error": "planner did not return a reviewable plan"}, status_code=502
+                if event.get("type") == "result":
+                    response = event["response"]
+                    audit.record_analysis(
+                        response,
+                        submitted_approval=analysis_request.approval,
+                        **_audit_kwargs(request, sid, context, session, question),
+                    )
+            if response is None:
+                return JSONResponse(
+                    {"error": "analysis produced no result"}, status_code=500
+                )
+            return JSONResponse(response.model_dump(mode="json"))
+        except Exception as exc:
+            audit.record_failure(
+                exc,
+                **_audit_kwargs(request, sid, context, session, question),
             )
-
-        response = None
-        async for event in analyze_stream(
-            context.df,
-            context.profile,
-            analysis_request,
-            artifacts_dir=context.artifacts_dir,
-            datasets=context.datasets or None,
-        ):
-            if event.get("type") == "result":
-                response = event["response"]
-        if response is None:
-            return JSONResponse(
-                {"error": "analysis produced no result"}, status_code=500
-            )
-        return JSONResponse(response.model_dump(mode="json"))
+            raise
     finally:
         session.end_query()
 

@@ -50,13 +50,35 @@ class Settings(BaseModel):
     max_retries_per_call: int = 3
     planner_max_tokens: int = 3000
     explainer_max_tokens: int = 1500
-    max_repair_attempts: int = 1
+    max_repair_attempts: int = Field(
+        default_factory=lambda: max(
+            0, int(os.getenv("INSIGHT_MAX_REPAIR_ATTEMPTS", "1") or 1)
+        )
+    )
     # When on, every question stops at a reviewable plan before execution.
     plan_approval: bool = Field(
         default_factory=lambda: os.getenv("INSIGHT_PLAN_APPROVAL", "")
         .strip()
         .lower()
         in {"1", "true", "yes", "on"}
+    )
+    plan_approval_ttl_minutes: int = Field(
+        default_factory=lambda: int(
+            os.getenv("INSIGHT_PLAN_APPROVAL_TTL_MINUTES", "30") or 30
+        )
+    )
+    # Append-only, hash-chained evidence ledger for plan reviews and analyses.
+    audit_ledger: bool = Field(
+        default_factory=lambda: os.getenv("INSIGHT_AUDIT_LEDGER", "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
+    audit_ledger_path: Path = Field(
+        default_factory=lambda: Path(
+            os.getenv("INSIGHT_AUDIT_LEDGER_PATH", "").strip()
+            or (ROOT_DIR / ".artifacts" / "audit" / "analysis.jsonl")
+        )
     )
     require_user_key: bool = Field(
         default_factory=lambda: os.getenv("INSIGHT_REQUIRE_USER_KEY", "")
@@ -116,6 +138,9 @@ class Settings(BaseModel):
     agentic_max_llm_calls: int = Field(
         default_factory=lambda: int(os.getenv("INSIGHT_AGENTIC_MAX_LLM_CALLS", "9") or 9)
     )
+    # Spacing between provider calls, including agentic loop calls and the
+    # final explainer in either mode. 0 = no added delay. Useful for provider
+    # rate limits (e.g. TPM).
     agentic_call_delay_s: float = Field(
         default_factory=lambda: float(os.getenv("INSIGHT_AGENTIC_DELAY_S", "0") or 0)
     )

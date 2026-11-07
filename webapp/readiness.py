@@ -42,5 +42,9 @@ def readiness_report(settings: Optional[Settings] = None) -> tuple[bool, dict]:
         "artifacts_writable": _artifacts_writable(settings.artifacts_dir),
         "provider_configured": _provider_configured(settings),
     }
+    if settings.audit_ledger:
+        checks["audit_ledger_writable"] = _artifacts_writable(
+            Path(settings.audit_ledger_path).parent
+        )
     ready = all(checks.values())
     return ready, {"status": "ready" if ready else "not_ready", **checks, "version": __version__}

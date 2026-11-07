@@ -225,7 +225,7 @@
             planPanel = null;
         }
 
-        function showPlanReview(plan, question) {
+        function showPlanReview(plan, question, approval) {
             if (!chat) return;
             removePlanPanel();
 
@@ -245,6 +245,18 @@
                 q.className = "plan-question";
                 q.textContent = question;
                 bubble.appendChild(q);
+            }
+
+            if (approval && approval.dataset_id) {
+                const binding = document.createElement("p");
+                binding.className = "plan-hint";
+                const expires = approval.expires_at
+                    ? new Date(approval.expires_at * 1000).toLocaleTimeString()
+                    : "unknown";
+                binding.textContent =
+                    "Bound to dataset " + approval.dataset_id +
+                    " (generation " + approval.generation + ") · expires " + expires;
+                bubble.appendChild(binding);
             }
 
             const editor = document.createElement("textarea");
@@ -291,7 +303,7 @@
                 startTimer();
                 setBusy(true);
                 try {
-                    await streamQuery(question, JSON.stringify(parsed));
+                    await streamQuery(question, JSON.stringify(parsed), approval);
                     stopTimer();
                     resetStatus();
                 } catch (err) {
@@ -374,13 +386,14 @@
             return { event, data: dataLines.join("\n").trim() };
         }
 
-        async function streamQuery(question, approvedPlan) {
+        async function streamQuery(question, approvedPlan, approval) {
             const params = new URLSearchParams();
             params.set("question", question);
             if (modelSelect && modelSelect.value) params.set("model_id", modelSelect.value);
             if (tempRange) params.set("temperature", tempRange.value);
             if (agentToggle) params.set("agentic", agentToggle.checked ? "1" : "0");
             if (approvedPlan) params.set("approved_plan", approvedPlan);
+            if (approval) params.set("approval", JSON.stringify(approval));
 
             controller = new AbortController();
             const res = await fetch("/query", {
@@ -438,7 +451,7 @@
                     } else if (event === "delta") {
                         appendDelta(payload.text || "");
                     } else if (event === "plan_review") {
-                        showPlanReview(payload.plan, payload.question || "");
+                        showPlanReview(payload.plan, payload.question || "", payload.approval);
                         stopTimer();
                         setBusy(false);
                     } else if (event === "delta_reset") {

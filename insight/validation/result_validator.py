@@ -33,6 +33,7 @@ def _scan_numeric_issues(table) -> list[ValidationIssue]:
                             f"({value}) at [{row_idx}][{col_name}]"
                         ),
                         step_id=table.step_id,
+                        code="NON_FINITE",
                     )
                 )
     return issues
@@ -76,6 +77,7 @@ def _missingness_warnings(plan: AnalysisPlan, profile) -> list[ValidationIssue]:
                         "incomplete values are excluded from calculations, which assumes data "
                         "are Missing Completely at Random (MCAR)"
                     ),
+                    code="MISSINGNESS_MCAR",
                 )
             )
     return issues
@@ -102,6 +104,7 @@ def validate_execution(
                     severity=severity,
                     message=f"step {result.step_id} ({result.operation}) failed: {result.error}",
                     step_id=result.step_id,
+                    code="STEP_FAILED",
                 )
             )
 
@@ -121,6 +124,7 @@ def validate_execution(
                             f"produced no table"
                         ),
                         step_id=step.step_id,
+                        code="TABLE_MISSING",
                     )
                 )
 
@@ -140,6 +144,7 @@ def validate_execution(
                     severity=severity,
                     message=f"table from step {step_id} ({op_name}) is empty{hint}",
                     step_id=step_id,
+                    code="EMPTY_TABLE",
                 )
             )
 
@@ -168,6 +173,7 @@ def validate_execution(
                     f"small sample sizes detected (< {_SMALL_SAMPLE_THRESHOLD}): "
                     f"{sample}{more}. Interpret with caution."
                 ),
+                code="SMALL_SAMPLE",
             )
         )
 
@@ -193,6 +199,7 @@ def validate_execution(
                         f"which produced no table"
                     ),
                     step_id=chart.source_step,
+                    code="CHART_SOURCE",
                 )
             )
             continue
@@ -208,6 +215,7 @@ def validate_execution(
                             f"(available: {sorted(available)})"
                         ),
                         step_id=chart.source_step,
+                        code="CHART_SOURCE",
                     )
                 )
 
