@@ -18,6 +18,8 @@ class TestOutcome:
     sample_note: str
     interpretation: str
     assumptions: list[str]
+    group_means: Optional[dict[str, float]] = None
+    difference: Optional[float] = None
 
 
 def isotonic_fit(values: np.ndarray) -> np.ndarray:
@@ -282,6 +284,8 @@ def run_group_comparison(
             f"statistically significant at alpha=0.05 (p={p:.4g})."
         ),
         assumptions=assumptions,
+        group_means={a_label: mean_a, b_label: mean_b},
+        difference=mean_b - mean_a,
     )
 
 

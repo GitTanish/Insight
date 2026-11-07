@@ -98,6 +98,7 @@ def _recompute_mismatch(step, detail: str) -> ValidationIssue:
         severity="error",
         message=f"independent recomputation mismatch ({detail})",
         step_id=step.step_id,
+        code="RECOMPUTE_MISMATCH",
     )
 
 
@@ -1101,6 +1102,75 @@ def _verify_regression(df, step, table, calcs: dict) -> list[ValidationIssue]:
     return issues
 
 
+def _verify_statistical_test(df, step, calcs: dict) -> list[ValidationIssue]:
+    params = step.params if isinstance(step.params, dict) else {}
+    column_a = params.get("column_a")
+    column_b = params.get("column_b")
+    if (
+        not column_a
+        or not column_b
+        or column_a not in df.columns
+        or column_b not in df.columns
+    ):
+        return []
+    from insight.analytics.statistics import route_and_run
+
+    try:
+        _, outcome = route_and_run(
+            df[[column_a, column_b]].copy(),
+            column_a,
+            column_b,
+            force=params.get("force"),
+        )
+    except Exception:
+        return []
+
+    issues: list[ValidationIssue] = []
+    if "test" in calcs and str(calcs["test"]) != outcome.test:
+        issues.append(
+            _recompute_mismatch(
+                step,
+                f"statistical_test test reported {calcs['test']!r} but engine "
+                f"recomputes {outcome.test!r}",
+            )
+        )
+    checks = (
+        ("statistic", outcome.statistic, 6),
+        ("p_value", outcome.p_value, 6),
+        ("effect_size", outcome.effect_size, 4),
+    )
+    for label, expected, digits in checks:
+        if label in calcs and not _rounded_close(calcs[label], expected, digits):
+            issues.append(
+                _recompute_mismatch(
+                    step,
+                    f"statistical_test {label} reported {calcs[label]} but engine "
+                    f"recomputes {expected}",
+                )
+            )
+    for label, value in (outcome.group_means or {}).items():
+        calc_label = f"mean_{label}"
+        if calc_label in calcs and not _rounded_close(calcs[calc_label], value, 6):
+            issues.append(
+                _recompute_mismatch(
+                    step,
+                    f"statistical_test {calc_label} reported {calcs[calc_label]} but "
+                    f"engine recomputes {value}",
+                )
+            )
+    if "difference" in calcs and not _rounded_close(
+        calcs["difference"], outcome.difference, 6
+    ):
+        issues.append(
+            _recompute_mismatch(
+                step,
+                f"statistical_test difference reported {calcs['difference']} but "
+                f"engine recomputes {outcome.difference}",
+            )
+        )
+    return issues
+
+
 def independently_verify(df, plan: AnalysisPlan, execution: ExecutionResult) -> list[ValidationIssue]:
     tables = execution.tables_by_step()
     effective = _effective_frames(df, plan)
@@ -1109,11 +1179,19 @@ def independently_verify(df, plan: AnalysisPlan, execution: ExecutionResult) -> 
         if step.input_step is not None:
             continue
         table = tables.get(step.step_id)
-        if table is None:
+        if table is None and step.operation != "statistical_test":
             continue
         step_df = effective.get(step.step_id, df)
         try:
-            if step.operation == "group_aggregate":
+            if step.operation == "statistical_test":
+                issues.extend(
+                    _verify_statistical_test(
+                        step_df,
+                        step,
+                        _calculations_by_step(execution, step.step_id),
+                    )
+                )
+            elif step.operation == "group_aggregate":
                 issues.extend(_verify_group_aggregate(step_df, step, table))
             elif step.operation == "top_n":
                 issues.extend(_verify_top_n(step_df, step, table))
@@ -1152,6 +1230,10 @@ def independently_verify(df, plan: AnalysisPlan, execution: ExecutionResult) -> 
                         f"({step.operation}): {type(exc).__name__}: {exc}"
                     ),
                     step_id=step.step_id,
+                    code="RECOMPUTE_SKIPPED",
                 )
             )
+    for issue in issues:
+        if not issue.code:
+            issue.code = "RECOMPUTE_MISMATCH"
     return issues

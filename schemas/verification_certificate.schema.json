@@ -1,0 +1,566 @@
+{
+  "$defs": {
+    "CertificateCheck": {
+      "properties": {
+        "status": {
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "not_checked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "checked": {
+          "default": 0,
+          "title": "Checked",
+          "type": "integer"
+        },
+        "failed": {
+          "default": 0,
+          "title": "Failed",
+          "type": "integer"
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/CertificateIssue"
+          },
+          "title": "Issues",
+          "type": "array"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "CertificateCheck",
+      "type": "object"
+    },
+    "CertificateClaim": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "numeric",
+            "causal"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "span": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Span",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "grounded",
+            "ungrounded",
+            "ignored",
+            "flagged",
+            "not_checked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "rule": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule"
+        },
+        "severity": {
+          "default": "info",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "normalized": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Normalized"
+        },
+        "normalized_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Normalized Value"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text",
+        "span",
+        "status"
+      ],
+      "title": "CertificateClaim",
+      "type": "object"
+    },
+    "CertificateEvidence": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "calculation",
+            "table_cell",
+            "table_column",
+            "note",
+            "warning"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "numbers": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Numbers",
+          "type": "array"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Id"
+        },
+        "table": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table"
+        },
+        "row": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Row"
+        },
+        "column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "label"
+      ],
+      "title": "CertificateEvidence",
+      "type": "object"
+    },
+    "CertificateIssue": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "default": "warning",
+          "enum": [
+            "error",
+            "warning"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Id"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "CertificateIssue",
+      "type": "object"
+    },
+    "CertificateTable": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "rows": {
+          "title": "Rows",
+          "type": "integer"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "digest": {
+          "title": "Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "columns",
+        "rows",
+        "digest"
+      ],
+      "title": "CertificateTable",
+      "type": "object"
+    },
+    "CertificateVerdict": {
+      "properties": {
+        "overall": {
+          "enum": [
+            "pass",
+            "pass_with_warnings",
+            "fail"
+          ],
+          "title": "Overall",
+          "type": "string"
+        },
+        "grounded": {
+          "title": "Grounded",
+          "type": "boolean"
+        },
+        "recomputed": {
+          "enum": [
+            "pass",
+            "fail",
+            "not_checked"
+          ],
+          "title": "Recomputed",
+          "type": "string"
+        },
+        "statistical_validity": {
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "not_checked"
+          ],
+          "title": "Statistical Validity",
+          "type": "string"
+        },
+        "causal_overreach": {
+          "enum": [
+            "pass",
+            "warn",
+            "not_checked"
+          ],
+          "title": "Causal Overreach",
+          "type": "string"
+        },
+        "structural": {
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "not_checked"
+          ],
+          "title": "Structural",
+          "type": "string"
+        }
+      },
+      "required": [
+        "overall",
+        "grounded",
+        "recomputed",
+        "statistical_validity",
+        "causal_overreach",
+        "structural"
+      ],
+      "title": "CertificateVerdict",
+      "type": "object"
+    },
+    "ReportedAggregate": {
+      "properties": {
+        "step_id": {
+          "title": "Step Id",
+          "type": "integer"
+        },
+        "operation": {
+          "title": "Operation",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "recomputation": {
+          "enum": [
+            "verified",
+            "mismatch",
+            "not_covered",
+            "not_checked"
+          ],
+          "title": "Recomputation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_id",
+        "operation",
+        "label",
+        "recomputation"
+      ],
+      "title": "ReportedAggregate",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "certificate_id": {
+      "title": "Certificate Id",
+      "type": "string"
+    },
+    "issued_at": {
+      "format": "date-time",
+      "title": "Issued At",
+      "type": "string"
+    },
+    "verifier": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Verifier",
+      "type": "object"
+    },
+    "attestation_level": {
+      "enum": [
+        "grounding",
+        "recomputed"
+      ],
+      "title": "Attestation Level",
+      "type": "string"
+    },
+    "subject": {
+      "additionalProperties": true,
+      "title": "Subject",
+      "type": "object"
+    },
+    "tables": {
+      "items": {
+        "$ref": "#/$defs/CertificateTable"
+      },
+      "title": "Tables",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/CertificateEvidence"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "aggregates": {
+      "items": {
+        "$ref": "#/$defs/ReportedAggregate"
+      },
+      "title": "Aggregates",
+      "type": "array"
+    },
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/CertificateClaim"
+      },
+      "title": "Claims",
+      "type": "array"
+    },
+    "checks": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CertificateCheck"
+      },
+      "title": "Checks",
+      "type": "object"
+    },
+    "verdict": {
+      "$ref": "#/$defs/CertificateVerdict"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "signature": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Signature"
+    }
+  },
+  "required": [
+    "certificate_id",
+    "issued_at",
+    "verifier",
+    "attestation_level",
+    "subject",
+    "verdict"
+  ],
+  "title": "VerificationCertificate",
+  "type": "object"
+}

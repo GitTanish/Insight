@@ -1,5 +1,12 @@
 # Insight — Real-World Analysis Log
 
+> **Status note (2026-11-07).** These runs are preserved as a historical log from
+> 2026-08-23. They predate the versioned verification certificate and the current
+> precision-aware grounding rules. The `Unverified figs` column is the legacy
+> grounding counter, not a certificate verdict. Current verification behavior is
+> documented in [`../docs/CERTIFICATE.md`](../docs/CERTIFICATE.md); the covered
+> recomputation set now includes `statistical_test`.
+
 - run: 2026-08-23 14:53
 - dataset: `diamonds.csv` (53,940 x 10, GIA-derived, unmodified)
 - model: `opencode/x-preview-f-free` (unlimited free endpoint)

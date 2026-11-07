@@ -5,7 +5,7 @@ tailored to Insight's contract - deterministic computation plus LLM narration - 
 generic SaaS checklist. Each criterion has an objective acceptance check; the status
 column is evidence-backed and must be updated when behavior changes.
 
-Last updated: 2026-10-29 · Scope: webapp + MCP server + toolkit · Out of scope: model quality.
+Last updated: 2026-11-08 · Scope: webapp + MCP server + toolkit + standalone verifier · Out of scope: model quality.
 
 Legend: **MET** = acceptance check passes and is covered by tests/docs · **PARTIAL** =
 implemented but an acceptance check is unproven or a documented gap remains · **OPEN** =
@@ -19,7 +19,7 @@ not implemented.
 
 | # | Criterion | Status | Evidence |
 |---|---|---|---|
-| C1 | Numbers are deterministic, auditable and verified | **MET** | `docs/TEST.md` verification matrix; `verify_claims` + toolkit run records; grounding on by default |
+| C1 | Numbers are deterministic, auditable and verified | **MET** | `docs/TEST.md` verification matrix; `verify_claims` + toolkit run records; versioned certificate with `grounding`/`recomputed` attestation; CLI + local HTTP; grounding on by default |
 | C2 | Provider failures are contained | **PARTIAL** | retry/fallback/budgets + typed errors; outage tests added in this pass; no live chaos drill |
 | C3 | Authentication + per-client identity | **PARTIAL** | optional bearer/cookie auth gate added this pass; default stays open for trusted-LAN use; no user database/RBAC |
 | C4 | Input and filesystem safety | **PARTIAL** | SQL sandbox + upload cap + non-root image; MCP file roots added this pass; archive-bomb limits not profiled |
@@ -39,17 +39,32 @@ Acceptance:
   independently recomputed before the answer ships.
 - The offline suite is green and is the release gate; a red suite blocks release.
 - `verify_claims` rejects fabricated numbers and detects tampered run evidence.
+- `verify_claims` returns a versioned certificate with claim spans, evidence
+  ids, per-aggregate recomputation status (`verified` / `mismatch` /
+  `not_covered` / `not_checked`), and an explicit `attestation_level`
+  (`grounding` vs `recomputed`).
+- Grounding handles scientific notation, precision-aware rounding, magnitude
+  matching, and `p < ...` thresholds; unverifiable checks are `not_checked`,
+  never silent passes. `statistical_test` is independently recomputed; SQL and
+  chained steps are reported `not_covered`.
+- The same certificate is available through the CLI and local HTTP surface; a
+  failed verification is a valid result, not a transport error.
 - Determinism claim is scoped: numbers are deterministic given inputs; plans are not.
 - Plan reviews and completed analyses can be recorded in an append-only,
   hash-chained evidence ledger (`INSIGHT_AUDIT_LEDGER=on`) that includes the
   dataset fingerprint, approval binding, plan hash and validation outcome.
 
 Current evidence: `docs/TEST.md` → "Verification evidence" and "Toolkit + MCP real-data
-smoke"; `tests/test_verification.py`, `tests/test_toolkit.py`, grounding/gateway tests;
-`insight/audit.py` and `tests/test_audit_ledger.py` for the ledger and tamper check.
+smoke"; `docs/CERTIFICATE.md`; `schemas/verification_certificate.schema.json`;
+`tests/test_verification.py`, `tests/test_toolkit.py`, `tests/test_certificate.py`,
+`tests/test_verify_service.py`, grounding/gateway tests;
+`tools/demo_epistemic_firewall.py` for the CLI path; `insight/audit.py` and
+`tests/test_audit_ledger.py` for the ledger and tamper check.
 
 Remaining: assert "zero ungrounded numbers shipped" as an end-to-end invariant across
-all UI answer paths (today the guarantee is tested at the component level).
+all UI answer paths (today the guarantee is tested at the component level). Grounding is
+value-based, not semantic-role-based; `signature` is still `null` because the verifier
+does not yet control evidence replay end to end.
 
 ## C2 - Failure containment
 
@@ -157,8 +172,9 @@ Acceptance:
 - Releases are annotated tags + GitHub releases with honest evidence.
 
 Current evidence: `.github/workflows/ci.yml` (test, security, docker jobs); releases
-`v2.2.0`, `v2.3.0`. Remaining: lockfile + SBOM/attestation (image digest signing) is a
-follow-up; current requirements use ranges.
+`v2.2.0`, `v2.3.0`; `v2.4.0` prepared (certificate + standalone verifier). Remaining:
+lockfile + SBOM/attestation (image digest signing) is a follow-up; current requirements
+use ranges.
 
 ## C9 - Scale and HA
 
@@ -207,7 +223,9 @@ written rollback runbook and image digests in release notes.
 
 ```bash
 pytest -q                                   # C1, C2, C3, C4, C5, C6, C7
+pytest -q tests/test_certificate.py tests/test_verify_service.py  # C1 certificate + HTTP
 python tools/smoke_toolkit.py               # C1 real-data validation
+python tools/demo_epistemic_firewall.py     # C1 CLI: correct pass, fabricated fail, causal warn
 python -m pip_audit -r requirements.txt     # C8 dependency audit
 docker build -t insight:local .             # C8 image build (then scan with trivy)
 python tools/retention.py --days 14 --dry-run   # C7 cleanup preview

@@ -718,8 +718,18 @@ class StatisticalTestOp(StatisticalTestParams):
                 value=outcome.effect_size,
                 detail=outcome.effect_label,
             ),
-            Calculation(label="interpretation", value=outcome.interpretation),
         ]
+        for label, value in (outcome.group_means or {}).items():
+            calcs.append(Calculation(label=f"mean_{label}", value=round(value, 6)))
+        if outcome.difference is not None:
+            calcs.append(
+                Calculation(
+                    label="difference",
+                    value=round(outcome.difference, 6),
+                    detail="second group mean minus first group mean",
+                )
+            )
+        calcs.append(Calculation(label="interpretation", value=outcome.interpretation))
         return OperationOutput(
             calculations=calcs,
             notes=(

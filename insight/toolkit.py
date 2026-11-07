@@ -47,8 +47,8 @@ from insight.domain.visualization import ValidationIssue
 from insight.ingest import EXCEL_EXTENSIONS, parse_csv_content, parse_tables
 from insight.profiling.profiler import profile_dataframe
 from insight.tools.runtime import ToolCall, dispatch
-from insight.validation.grounding import find_ungrounded_numbers
-from insight.validation.verification import independently_verify
+from insight.validation.result_validator import validate_execution
+from insight.verification.certificate import build_certificate
 
 
 class ToolkitError(Exception):
@@ -98,11 +98,14 @@ def _table_payload(table: Optional[DataTable]) -> Optional[dict]:
 
 
 def _issue_payload(issue) -> dict:
-    return {
+    payload = {
         "severity": issue.severity,
         "message": issue.message,
         "step_id": issue.step_id,
     }
+    if getattr(issue, "code", None):
+        payload["code"] = issue.code
+    return payload
 
 
 class AnalysisToolkit:
@@ -395,8 +398,9 @@ class AnalysisToolkit:
 
         Uses the most recent run unless ``run_id`` is given. Callers may add
         extra evidence (tables as ``{"columns": [...], "rows": [...]}`` and raw
-        numbers) for figures produced outside the toolkit. Returns ungrounded
-        numbers (no matching evidence) plus independent-recomputation issues.
+        numbers) for figures produced outside the toolkit. Returns the legacy
+        summary plus a versioned ``certificate`` with claim spans, evidence
+        ids, recomputed aggregates and advisory statistical/causal checks.
         """
         with self._lock:
             record = self._run(run_id)
@@ -439,24 +443,45 @@ class AnalysisToolkit:
                     "or pass evidence_numbers/evidence_tables"
                 )
 
-            ungrounded = find_ungrounded_numbers(
-                answer or "",
-                calcs,
-                tables,
-                notes="; ".join(notes),
-                warnings=warnings,
-            )
-            issues = []
+            attestation_level = "recomputed" if record is not None else "grounding"
+            issues: list[ValidationIssue] = []
             if record is not None:
                 try:
-                    issues = independently_verify(record.df, record.plan, record.execution)
+                    validation = validate_execution(
+                        record.plan,
+                        record.execution,
+                        df=record.df,
+                        profile=self._profiles.get(record.table),
+                    )
+                    issues = list(validation.errors) + list(validation.warnings)
                 except Exception as exc:
                     issues = [
                         ValidationIssue(
                             severity="warning",
-                            message=f"independent verification failed: {exc}",
+                            message=f"validation failed: {exc}",
+                            code="VALIDATION_FAILED",
                         )
                     ]
+
+            certificate = build_certificate(
+                answer or "",
+                run_id=record.run_id if record else None,
+                calcs=calcs,
+                tables=tables,
+                notes=notes,
+                warnings=warnings,
+                issues=issues,
+                plan=record.plan if record else None,
+                execution=record.execution if record else None,
+                attestation_level=attestation_level,
+            )
+            ungrounded = [
+                claim.normalized
+                for claim in certificate.claims
+                if claim.kind == "numeric"
+                and claim.status == "ungrounded"
+                and claim.normalized is not None
+            ]
             errors = [i for i in issues if i.severity == "error"]
             return {
                 "run_id": record.run_id if record else None,
@@ -464,6 +489,7 @@ class AnalysisToolkit:
                 "verified": not errors,
                 "ungrounded_numbers": ungrounded,
                 "verification_issues": [_issue_payload(i) for i in issues],
+                "certificate": certificate.model_dump(mode="json"),
             }
 
     # ---------------------------------------------------------------- helpers

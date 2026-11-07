@@ -19,6 +19,7 @@ class ValidationIssue(BaseModel):
     severity: Literal["error", "warning"]
     message: str
     step_id: Optional[int] = None
+    code: Optional[str] = None
 
 
 class ValidationResult(BaseModel):
