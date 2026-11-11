@@ -902,10 +902,10 @@ The `attestation_level` field makes the trust boundary explicit:
 The same contract is exposed through three surfaces:
 
 - the toolkit/MCP `verify_claims` tool,
-- `python -m insight.verify_cli` (evidence file, data + operation, or data + SQL; `--params-file` for shells that mangle inline JSON),
+- `python -m insight.verify_cli` (evidence file, data + operation, data + SQL, or `--verify-certificate` for a signed certificate; `--params-file` for shells that mangle inline JSON),
 - `uvicorn insight.verify_service:app` with `POST /v1/verify` (local/dev only, optional bearer token).
 
-A failed verification returns a valid certificate with HTTP 200/exit code 1; it is a result, not a transport error. Causal checks are rule-based and advisory. `signature` remains `null` until the verifier controls evidence replay end to end.
+A failed verification returns a valid certificate with HTTP 200/exit code 1; it is a result, not a transport error. Causal checks are rule-based and advisory. Certificates are unsigned by default; when `INSIGHT_SIGNING_KEY` is configured, they are signed with HMAC-SHA256 over a canonical payload that includes `subject.dataset_sha256`. `python -m insight.verify_cli --verify-certificate` verifies the signature without re-running the analysis. HMAC is symmetric; public-key receipts and replay control remain future work.
 
 ### 10.6 Repair semantics
 
@@ -1352,7 +1352,7 @@ The README and `PRODUCTION_READINESS.md` document the current release evidence a
 | Agent mode is opt-in | Preserves predictable default cost/latency while enabling iterative investigation | More LLM calls, higher latency, throttle sensitivity |
 | Shared validation tail for both modes | Guarantees agent answers get the same verification, charts, grounding, and caching | Requires rebuilding engine objects from tool results |
 | Independent recomputation for core aggregates | Catches engine/table mismatches without duplicating every statistical method | Scope is limited to group aggregates, top-N, value counts, correlation, statistical tests, regression, ANOVA, and subset comparisons |
-| Verifier certificate with explicit attestation levels | Makes the trust boundary machine-checkable and keeps legacy `verify_claims` output compatible | Grounding cannot prove evidence is true or attached to the right predicate; signing and replay control remain future work |
+| Verifier certificate with explicit attestation levels | Makes the trust boundary machine-checkable and keeps legacy `verify_claims` output compatible | Grounding cannot prove evidence is true or attached to the right predicate; signing is opt-in HMAC, and public-key receipts/replay control remain future work |
 | Grounding guard on every narrative | Prevents fabricated numbers from shipping silently | Heuristic number matching can produce false positives/negatives; residual warnings remain possible |
 | In-memory sessions | Simple, fast, no serialization of frames/responses | Single-worker constraint; process restart loses sessions |
 | Filesystem cache instead of Redis | No extra service; atomic local publish; easy local operation | Not shared across nodes; needs volume management |

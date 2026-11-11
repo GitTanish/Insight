@@ -151,6 +151,17 @@ class Settings(BaseModel):
     auth_token: str | None = Field(
         default_factory=lambda: (os.getenv("INSIGHT_AUTH_TOKEN") or "").strip() or None
     )
+    # Optional HMAC-SHA256 signing for verification certificates. Unset keeps
+    # signature=null for backward compatibility. The key never enters the
+    # certificate; key_id is only a rotation hint.
+    signing_key: str | None = Field(
+        default_factory=lambda: (os.getenv("INSIGHT_SIGNING_KEY") or "").strip() or None
+    )
+    signing_key_id: str = Field(
+        default_factory=lambda: (os.getenv("INSIGHT_SIGNING_KEY_ID") or "default")
+        .strip()
+        or "default"
+    )
     trust_proxy_auth: bool = Field(
         default_factory=lambda: os.getenv("INSIGHT_TRUST_PROXY_AUTH", "")
         .strip()
