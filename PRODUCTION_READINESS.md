@@ -63,8 +63,8 @@ smoke"; `docs/CERTIFICATE.md`; `schemas/verification_certificate.schema.json`;
 
 Remaining: assert "zero ungrounded numbers shipped" as an end-to-end invariant across
 all UI answer paths (today the guarantee is tested at the component level). Grounding is
-value-based, not semantic-role-based; `signature` is still `null` because the verifier
-does not yet control evidence replay end to end.
+value-based, not semantic-role-based. Certificate signing is opt-in HMAC-SHA256 with a
+dataset commitment; public-key receipts and replay control remain future work.
 
 ## C2 - Failure containment
 

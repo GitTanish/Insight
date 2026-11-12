@@ -14,17 +14,23 @@ Examples::
     # Verify a text-to-SQL narrative against the query result
     python -m insight.verify_cli --answer-file draft.md \
         --data sales.csv --sql "SELECT region, SUM(revenue) AS total ..."
+
+    # Verify a signed certificate (HMAC-SHA256)
+    python -m insight.verify_cli --verify-certificate certificate.json \
+        --signing-key-file signing-key.txt
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Optional
 
 from insight.toolkit import AnalysisToolkit, ToolkitError
+from insight.verification.signing import verify_certificate_signature
 
 
 def _load_answer(args: argparse.Namespace) -> str:
@@ -42,6 +48,16 @@ def _load_evidence(path: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("evidence JSON must be an object")
     return payload
+
+
+def _load_signing_key(path: Optional[str]) -> str:
+    if path:
+        key = Path(path).read_text(encoding="utf-8").strip()
+    else:
+        key = (os.getenv("INSIGHT_SIGNING_KEY") or "").strip()
+    if not key:
+        raise ValueError("provide --signing-key-file or set INSIGHT_SIGNING_KEY")
+    return key
 
 
 def _evidence_args(payload: dict[str, Any]) -> dict[str, Any]:
@@ -108,6 +124,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSON file with numbers/tables/notes for evidence-only verification",
     )
     parser.add_argument(
+        "--verify-certificate",
+        help="Verify the signature on an existing certificate JSON file",
+    )
+    parser.add_argument(
+        "--signing-key-file",
+        help="Read the HMAC signing key from this file (or set INSIGHT_SIGNING_KEY)",
+    )
+    parser.add_argument(
         "--out",
         help="Write the certificate to this path instead of stdout",
     )
@@ -127,6 +151,43 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[list[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.verify_certificate:
+        try:
+            if (
+                args.answer
+                or args.answer_file
+                or args.data
+                or args.evidence
+                or args.operation
+                or args.sql
+            ):
+                raise ValueError(
+                    "--verify-certificate cannot be combined with answer, data, "
+                    "operation, SQL, or evidence inputs"
+                )
+            certificate = json.loads(
+                Path(args.verify_certificate).read_text(encoding="utf-8")
+            )
+            if not isinstance(certificate, dict):
+                raise ValueError("certificate JSON must be an object")
+            key = _load_signing_key(args.signing_key_file)
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(json.dumps({"error": str(exc)}), file=sys.stderr)
+            return 2
+
+        valid = verify_certificate_signature(certificate, key)
+        print(
+            json.dumps(
+                {
+                    "valid": valid,
+                    "certificate_id": certificate.get("certificate_id"),
+                },
+                indent=None if args.compact else 2,
+                ensure_ascii=False,
+            )
+        )
+        return 0 if valid else 1
 
     try:
         answer = _load_answer(args)

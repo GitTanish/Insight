@@ -383,7 +383,8 @@ Real-data trials covered superstore group aggregates, fabricated values, causal
 warnings, SQL `not_checked`, penguins `statistical_test`, live HTTP (including
 bearer auth), and the full MCP `load_table → execute_operation → verify_claims`
 flow. Remaining limits: grounding is value-based, not semantic-role-based;
-`signature` is still `null`; no persistence/queues/tenancy.
+certificate signing is opt-in HMAC-SHA256 with a dataset commitment (public-key
+receipts remain future work); no persistence/queues/tenancy.
 
 ### Explicitly deferred (per owner decision, do not start unprompted)
 Container/subprocess sandboxing (no codegen exists), multi-tenant RBAC/SSO, PDF export, dashboards, external session store (C9 - owner-deferred; requires a consistency model for DataFrames/responses).

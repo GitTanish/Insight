@@ -76,7 +76,7 @@ Warnings and skipped checks produce `pass_with_warnings`.
   "issued_at": "2026-11-07T14:41:34.013997Z",
   "verifier": {
     "name": "insight-verifier",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "engine": "pandas/scipy/duckdb",
     "python": "3.11.9"
   },
@@ -85,7 +85,8 @@ Warnings and skipped checks produce `pass_with_warnings`.
     "answer_sha256": "04039b47...",
     "run_id": "c72de3fcc074",
     "plan_digest": "72875d86...",
-    "execution_digest": "8ba7704a..."
+    "execution_digest": "8ba7704a...",
+    "dataset_sha256": "9f2c47d1..."
   },
   "tables": [
     {
@@ -164,6 +165,9 @@ Warnings and skipped checks produce `pass_with_warnings`.
 }
 ```
 
+The example is unsigned. With `INSIGHT_SIGNING_KEY` configured, `signature`
+contains the HMAC receipt described below.
+
 ## Local HTTP surface
 
 For pipelines that do not speak MCP, run the local FastAPI endpoint:
@@ -182,6 +186,40 @@ It returns the certificate with HTTP 200 even when `verdict.overall == "fail"`;
 a failed verification is a valid result, not a transport error. Set
 `INSIGHT_VERIFY_AUTH_TOKEN` to require `Authorization: Bearer ...`. This is a
 local/dev surface, not a multi-tenant service.
+
+## Signing
+
+Signing is optional and backward compatible. When `INSIGHT_SIGNING_KEY` is set
+(or `signing_key` is passed to `AnalysisToolkit`), the certificate is signed
+with HMAC-SHA256 over a deterministic JSON representation of every field except
+`signature` itself. The signature is attached as:
+
+```json
+"signature": {
+  "alg": "HMAC-SHA256",
+  "key_id": "default",
+  "value": "<base64 MAC>"
+}
+```
+
+`subject.dataset_sha256` commits to the parsed root frame used for execution:
+its column names, dtypes, row count, and row hashes. It does not embed the data.
+The commitment is stable for a given pandas version.
+
+Verify a signed certificate without re-running the analysis:
+
+```bash
+python -m insight.verify_cli --verify-certificate certificate.json \
+    --signing-key-file signing-key.txt
+```
+
+The command exits `0` for a valid signature, `1` for an invalid/tampered
+certificate, and `2` for a usage or key error. `INSIGHT_SIGNING_KEY` can be used
+instead of `--signing-key-file`.
+
+HMAC is symmetric: anyone who can verify also holds the signing key. Public-key
+(Ed25519) receipts for external auditors are future work. A signature binds the
+certificate fields; it does not prove the analysis is correct.
 
 ## Generating the JSON Schema
 
@@ -205,6 +243,8 @@ print(json.dumps(VerificationCertificate.model_json_schema(), indent=2))
 - **Causal flags are advisory.** They are a prompt to inspect the analysis,
   not proof that the causal statement is false. The lexicon is intentionally
   small and deterministic; it is not a semantic entailment model.
-- **Signing is future work.** `signature` is present but always `null` for
-  now. A signature is only meaningful once the verifier controls the evidence
-  and can replay the execution deterministically.
+- **Signing is opt-in.** With a configured key, the certificate binds its
+  fields (including `subject.dataset_sha256`, plan/execution digests, checks,
+  and claims) with HMAC-SHA256. Without a key, `signature` stays `null`. The
+  signature proves integrity and provenance under a shared key; it does not
+  prove the underlying analysis is correct.

@@ -35,10 +35,11 @@ from insight.validation.grounding import (
     ground_numeric_claims,
 )
 from insight.verification.causal import detect_causal_claims
+from insight.verification.signing import sign_payload
 
 CERTIFICATE_SCHEMA_VERSION = "1.0"
 VERIFIER_NAME = "insight-verifier"
-VERIFIER_VERSION = "0.1.0"
+VERIFIER_VERSION = "0.2.0"
 
 _RECOMPUTE_COVERED_OPS = {
     "group_aggregate",
@@ -388,8 +389,11 @@ def build_certificate(
     issues: list[ValidationIssue],
     plan: Any = None,
     execution: Any = None,
+    dataset_sha256: Optional[str] = None,
     attestation_level: Literal["grounding", "recomputed"] = "grounding",
     verifier_version: str = VERIFIER_VERSION,
+    signing_key: Optional[str] = None,
+    signing_key_id: str = "default",
 ) -> VerificationCertificate:
     """Assemble a certificate from already-computed evidence and issues."""
     answer = answer or ""
@@ -631,6 +635,7 @@ def build_certificate(
             if execution is not None and hasattr(execution, "model_dump")
             else None
         ),
+        "dataset_sha256": dataset_sha256,
     }
 
     limitations = [
@@ -650,7 +655,7 @@ def build_certificate(
             "recomputed.",
         )
 
-    return VerificationCertificate(
+    certificate = VerificationCertificate(
         certificate_id=uuid.uuid4().hex,
         issued_at=datetime.now(timezone.utc),
         verifier={
@@ -676,3 +681,9 @@ def build_certificate(
         ),
         limitations=limitations,
     )
+    if signing_key:
+        payload = certificate.model_dump(mode="json", exclude={"signature"})
+        certificate = certificate.model_copy(
+            update={"signature": sign_payload(payload, signing_key, signing_key_id)}
+        )
+    return certificate

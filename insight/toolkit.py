@@ -46,9 +46,11 @@ from insight.domain.execution import (
 from insight.domain.visualization import ValidationIssue
 from insight.ingest import EXCEL_EXTENSIONS, parse_csv_content, parse_tables
 from insight.profiling.profiler import profile_dataframe
+from insight.settings import get_settings
 from insight.tools.runtime import ToolCall, dispatch
 from insight.validation.result_validator import validate_execution
 from insight.verification.certificate import build_certificate
+from insight.verification.signing import dataset_sha256
 
 
 class ToolkitError(Exception):
@@ -126,12 +128,19 @@ class AnalysisToolkit:
         max_file_bytes: Optional[int] = None,
         max_runs: int = 100,
         max_tables: int = 64,
+        signing_key: Optional[str] = None,
+        signing_key_id: Optional[str] = None,
     ) -> None:
         self._tables: dict[str, pd.DataFrame] = {}
         self._profiles: dict[str, DatasetProfile] = {}
         self._runs: "OrderedDict[str, _RunRecord]" = OrderedDict()
         self._last_run_id: Optional[str] = None
         self._lock = threading.Lock()
+        settings = get_settings()
+        self._signing_key = (
+            signing_key if signing_key is not None else settings.signing_key
+        ) or None
+        self._signing_key_id = signing_key_id or settings.signing_key_id
         self._file_roots = (
             None
             if file_roots is None
@@ -473,7 +482,10 @@ class AnalysisToolkit:
                 issues=issues,
                 plan=record.plan if record else None,
                 execution=record.execution if record else None,
+                dataset_sha256=dataset_sha256(record.df) if record else None,
                 attestation_level=attestation_level,
+                signing_key=self._signing_key,
+                signing_key_id=self._signing_key_id,
             )
             ungrounded = [
                 claim.normalized
